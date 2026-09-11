@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Table Stakes Admin Dashboard</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f3d32;
+      color: #f1ead9;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { color: #cda149; margin-bottom: 30px; }
+    .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+    .card {
+      background: rgba(22, 33, 27, 0.95);
+      border: 1px solid rgba(205, 161, 73, 0.2);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .card h2 { margin-top: 0; color: #cda149; }
+    .section { margin: 20px 0; }
+    .users-list { max-height: 400px; overflow-y: auto; }
+    .user-item {
+      padding: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .user-item .controls {
+      display: flex; gap: 10px;
+    }
+    button {
+      background: #cda149;
+      color: #1a1208;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:hover { background: #e3bd6d; }
+    button.danger {
+      background: #b8495a;
+      color: #fff;
+    }
+    input {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(205, 161, 73, 0.3);
+      color: #f1ead9;
+      padding: 8px;
+      border-radius: 6px;
+      width: 100%;
+      margin: 8px 0;
+    }
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .stat-value {
+      font-size: 24px;
+      color: #cda149;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>♠ Table Stakes Admin Dashboard</h1>
+    
+    <div class="dashboard">
+      <!-- Stats -->
+      <div class="card">
+        <h2>Overview</h2>
+        <div class="stat">
+          <span>Total Users</span>
+          <span class="stat-value" id="userCount">0</span>
+        </div>
+        <div class="stat">
+          <span>Active Rooms</span>
+          <span class="stat-value" id="roomCount">0</span>
+        </div>
+        <div class="stat">
+          <span>Players In Game</span>
+          <span class="stat-value" id="playerCount">0</span>
+        </div>
+      </div>
+
+      <!-- Users Management -->
+      <div class="card">
+        <h2>Users</h2>
+        <div class="section">
+          <input type="text" id="searchUser" placeholder="Search username...">
+          <div class="users-list" id="usersList"></div>
+        </div>
+      </div>
+
+      <!-- Give Chips -->
+      <div class="card">
+        <h2>Give Chips to Player</h2>
+        <div class="section">
+          <input type="text" id="chipUserId" placeholder="User ID">
+          <input type="text" id="chipRoomId" placeholder="Room ID">
+          <input type="number" id="chipAmount" placeholder="Chip amount">
+          <button onclick="giveChips()">Give Chips</button>
+        </div>
+      </div>
+
+      <!-- Rooms Management -->
+      <div class="card">
+        <h2>Rooms</h2>
+        <div class="section" id="roomsList"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = 'http://localhost:3000/api';
+    const token = localStorage.getItem('adminToken');
+
+    async function loadDashboard() {
+      try {
+        const users = await fetch(`${API}/admin/users`, { headers: { 'Authorization': `Bearer ${token}` } }).then(r => r.json());
+        const rooms = await fetch(`${API}/admin/rooms`, { headers: { 'Authorization': `Bearer ${token}` } }).then(r => r.json());
+
+        document.getElementById('userCount').textContent = users.length;
+        document.getElementById('roomCount').textContent = rooms.length;
+        document.getElementById('playerCount').textContent = rooms.reduce((sum, r) => sum + (r.player_count || 0), 0);
+
+        renderUsers(users);
+        renderRooms(rooms);
+      } catch (e) {
+        console.error('Load error:', e);
+        alert('Failed to load dashboard');
+      }
+    }
+
+    function renderUsers(users) {
+      const list = document.getElementById('usersList');
+      list.innerHTML = users.map(u => `
+        <div class="user-item">
+          <div>
+            <strong>${u.username}</strong>
+            ${u.is_admin ? ' <span style="color: #cda149;">[ADMIN]</span>' : ''}
+          </div>
+          <div class="controls">
+            <button onclick="removeUser('${u.id}')">Remove</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderRooms(rooms) {
+      const list = document.getElementById('roomsList');
+      list.innerHTML = rooms.map(r => `
+        <div class="user-item">
+          <div>
+            <strong>${r.name}</strong><br>
+            <small>Code: ${r.room_code} | Players: ${r.player_count || 0}</small>
+          </div>
+          <div class="controls">
+            <button class="danger" onclick="deleteRoom('${r.id}')">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function giveChips() {
+      const userId = document.getElementById('chipUserId').value;
+      const roomId = document.getElementById('chipRoomId').value;
+      const amount = parseInt(document.getElementById('chipAmount').value);
+
+      if (!userId || !roomId || !amount) {
+        alert('Fill all fields');
+        return;
+      }
+
+      try {
+        await fetch(`${API}/admin/users/${userId}/chips`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount, roomId })
+        });
+        alert('Chips given!');
+        loadDashboard();
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+
+    async function removeUser(userId) {
+      if (!confirm('Remove this user?')) return;
+      try {
+        // Implement user deletion in backend if needed
+        alert('User removal not yet implemented');
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+
+    async function deleteRoom(roomId) {
+      if (!confirm('Delete this room?')) return;
+      try {
+        await fetch(`${API}/admin/rooms/${roomId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        alert('Room deleted!');
+        loadDashboard();
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+
+    loadDashboard();
+    setInterval(loadDashboard, 5000); // Refresh every 5s
+  </script>
+</body>
+</html>

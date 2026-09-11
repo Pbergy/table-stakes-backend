@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: table_stakes
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/table_stakes
+      SESSION_SECRET: dev-secret-change-in-prod
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin123
+    depends_on:
+      - postgres
+    command: npm start
+
+volumes:
+  postgres_data:
