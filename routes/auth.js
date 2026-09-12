@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
+const { depositPendingRakeToAdmin } = require('../engine/gameEngine');
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ router.post('/register', async (req, res) => {
     const userId = uuidv4();
 
     const result = await pool.query(
-      'INSERT INTO users (id, username, email, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, username',
+      'INSERT INTO users (id, username, email, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, username, is_admin',
       [userId, username, email, passwordHash]
     );
 
@@ -31,8 +32,7 @@ router.post('/register', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
+  try {\n    const { username, password } = req.body;
 
     const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
     if (result.rows.length === 0) {
@@ -46,8 +46,34 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ id: user.id, username: user.username, is_admin: user.is_admin }, process.env.SESSION_SECRET || 'dev-secret');
-    res.json({ token, user: { id: user.id, username: user.username, is_admin: user.is_admin } });
+    // If admin, deposit pending rake earnings
+    let depositResult = null;
+    if (user.is_admin) {
+      try {
+        depositResult = await depositPendingRakeToAdmin(user.id);
+        console.log('✅ Admin rake deposited:', depositResult);
+      } catch (e) {
+        console.error('Rake deposit error:', e);
+        // Don't fail login if rake deposit fails
+      }
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username, is_admin: user.is_admin },
+      process.env.SESSION_SECRET || 'dev-secret'
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        is_admin: user.is_admin,
+        balance: user.balance,
+        totalRakeEarned: user.total_rake_earned
+      },
+      depositNotification: depositResult?.message || null
+    });
   } catch (e) {
     console.error('Login error:', e);
     res.status(500).json({ error: 'Server error' });
