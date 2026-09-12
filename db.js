@@ -17,6 +17,8 @@ async function init() {
         email VARCHAR(100) UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         is_admin BOOLEAN DEFAULT false,
+        balance INT DEFAULT 0,
+        total_rake_earned INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
@@ -30,6 +32,7 @@ async function init() {
         max_players INT DEFAULT 9,
         status VARCHAR(20) DEFAULT 'waiting',
         settings JSONB DEFAULT '{}',
+        admin_rake_percent FLOAT DEFAULT 8.0,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
@@ -57,6 +60,8 @@ async function init() {
         pot INT DEFAULT 0,
         side_pots JSONB DEFAULT '[]',
         game_state JSONB DEFAULT '{}',
+        winner_id UUID REFERENCES users(id),
+        rake_collected INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
@@ -77,6 +82,15 @@ async function init() {
         amount INT NOT NULL,
         type VARCHAR(20),
         description TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_deposits (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        admin_id UUID NOT NULL REFERENCES users(id),
+        amount INT NOT NULL,
+        source VARCHAR(50),
+        game_ids UUID[],
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
