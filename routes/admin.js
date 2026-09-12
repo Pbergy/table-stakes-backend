@@ -7,11 +7,53 @@ const router = express.Router();
 // Get all users
 router.get('/users', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, username, email, is_admin, created_at FROM users ORDER BY created_at DESC');
+    const result = await pool.query('SELECT id, username, email, is_admin, balance, total_rake_earned, created_at FROM users ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (e) {
     console.error('Get users error:', e);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Get admin earnings dashboard
+router.get('/earnings', async (req, res) => {
+  try {
+    // Get current admin user
+    const adminResult = await pool.query('SELECT id, balance, total_rake_earned FROM users WHERE id = $1 AND is_admin = true', [req.user.id]);
+    
+    if (adminResult.rows.length === 0) {
+      return res.status(403).json({ error: 'Not an admin user' });
+    }
+
+    const admin = adminResult.rows[0];
+
+    // Get recent deposits
+    const depositsResult = await pool.query(
+      'SELECT * FROM admin_deposits WHERE admin_id = $1 ORDER BY created_at DESC LIMIT 20',
+      [req.user.id]
+    );
+
+    // Get rake by room (last 30 days)
+    const rakeByRoomResult = await pool.query(
+      `SELECT r.id, r.name, SUM(g.rake_collected) as total_rake, COUNT(g.id) as hands_played
+       FROM games g
+       JOIN rooms r ON g.room_id = r.id
+       WHERE g.created_at > NOW() - INTERVAL '30 days'
+       AND g.rake_collected > 0
+       GROUP BY r.id, r.name
+       ORDER BY total_rake DESC`,
+      []
+    );
+
+    res.json({
+      currentBalance: admin.balance,
+      totalEarned: admin.total_rake_earned,
+      recentDeposits: depositsResult.rows,
+      rakeByRoom: rakeByRoomResult.rows
+    });
+  } catch (e) {
+    console.error('Get earnings error:', e);
+    res.status(500).json({ error: 'Failed to fetch earnings' });
   }
 });
 
@@ -71,7 +113,7 @@ router.delete('/rooms/:roomId', async (req, res) => {
 router.get('/rooms', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT r.*, COUNT(rp.id) as player_count FROM rooms r LEFT JOIN room_players rp ON r.id = rp.room_id GROUP BY r.id ORDER BY r.created_at DESC'
+      'SELECT r.*, COUNT(rp.id) as player_count, COALESCE(SUM(g.rake_collected), 0) as total_rake FROM rooms r LEFT JOIN room_players rp ON r.id = rp.room_id LEFT JOIN games g ON r.id = g.room_id GROUP BY r.id ORDER BY r.created_at DESC'
     );
     res.json(result.rows);
   } catch (e) {
