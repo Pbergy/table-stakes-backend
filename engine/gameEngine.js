@@ -144,9 +144,122 @@ async function handlePlayerAction(roomId, userId, action) {
   }
 }
 
+// Finalize hand winner and collect rake
+async function finalizeHand(roomId, winnerId, potAmount) {
+  try {
+    const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
+    if (room.rows.length === 0) throw new Error('Room not found');
+
+    const rakePercent = room.rows[0].admin_rake_percent || 8;
+    const rakeAmount = Math.floor(potAmount * (rakePercent / 100));
+    const winnerPayout = potAmount - rakeAmount;
+
+    // Update game with winner and rake
+    await pool.query(
+      'UPDATE games SET winner_id = $1, rake_collected = $2, stage = $3 WHERE room_id = $4 ORDER BY created_at DESC LIMIT 1',
+      [winnerId, rakeAmount, 'complete', roomId]
+    );
+
+    // Give winner their payout (minus rake)
+    await pool.query(
+      'UPDATE room_players SET chips = chips + $1 WHERE user_id = $2 AND room_id = $3',
+      [winnerPayout, winnerId, roomId]
+    );
+
+    // Record transaction for winner
+    await pool.query(
+      'INSERT INTO transactions (id, user_id, room_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)',
+      [uuidv4(), winnerId, roomId, winnerPayout, 'win', `Won hand, pot was ${potAmount}`]
+    );
+
+    // Add rake to admin's pending balance
+    await pool.query(
+      'UPDATE users SET balance = balance + $1, total_rake_earned = total_rake_earned + $2 WHERE is_admin = true',
+      [rakeAmount, rakeAmount]
+    );
+
+    // Log the rake collection
+    const adminUser = await pool.query('SELECT id FROM users WHERE is_admin = true LIMIT 1');
+    if (adminUser.rows.length > 0) {
+      await pool.query(
+        'INSERT INTO game_log (id, room_id, message) VALUES ($1, $2, $3)',
+        [uuidv4(), roomId, `Admin collected rake: ${rakeAmount} chips (${rakePercent}% of ${potAmount})`]
+      );
+    }
+
+    return { winnerId, potAmount, rakeAmount, winnerPayout };
+  } catch (e) {
+    console.error('Finalize hand error:', e);
+    throw e;
+  }
+}
+
+// Get all pending rake for admin (when they sign in)
+async function getPendingRakeForAdmin(adminId) {
+  try {
+    const result = await pool.query(
+      'SELECT balance, total_rake_earned FROM users WHERE id = $1 AND is_admin = true',
+      [adminId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Not an admin user');
+    }
+
+    return result.rows[0];
+  } catch (e) {
+    console.error('Get pending rake error:', e);
+    throw e;
+  }
+}
+
+// Deposit pending rake to admin account (when they sign in)
+async function depositPendingRakeToAdmin(adminId) {
+  try {
+    const admin = await pool.query(
+      'SELECT id, balance FROM users WHERE id = $1 AND is_admin = true',
+      [adminId]
+    );
+
+    if (admin.rows.length === 0) {
+      throw new Error('Not an admin user');
+    }
+
+    const pendingBalance = admin.rows[0].balance;
+
+    if (pendingBalance <= 0) {
+      return { message: 'No pending rake to deposit', amount: 0 };
+    }
+
+    // Create deposit record
+    await pool.query(
+      'INSERT INTO admin_deposits (id, admin_id, amount, source, created_at) VALUES ($1, $2, $3, $4, NOW())',
+      [uuidv4(), adminId, pendingBalance, 'rake_collection']
+    );
+
+    // Record transaction
+    await pool.query(
+      'INSERT INTO transactions (id, user_id, amount, type, description, created_at) VALUES ($1, $2, $3, $4, $5, NOW())',
+      [uuidv4(), adminId, pendingBalance, 'deposit', `Rake deposit: ${pendingBalance} chips`]
+    );
+
+    return {
+      success: true,
+      depositedAmount: pendingBalance,
+      message: `Successfully deposited ${pendingBalance} chips from rake earnings`
+    };
+  } catch (e) {
+    console.error('Deposit rake error:', e);
+    throw e;
+  }
+}
+
 module.exports = {
   startHand,
   getGameState,
   handlePlayerAction,
+  finalizeHand,
+  getPendingRakeForAdmin,
+  depositPendingRakeToAdmin,
   makeDeck
 };
