@@ -49,6 +49,24 @@ router.post('/rooms/:roomId/action', async (req, res) => {
   }
 });
 
+// Finalize hand (mark winner and collect rake)
+router.post('/rooms/:roomId/finalize', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { winnerId, potAmount } = req.body;
+
+    if (!winnerId || !potAmount) {
+      return res.status(400).json({ error: 'Winner ID and pot amount required' });
+    }
+
+    const result = await gameEngine.finalizeHand(roomId, winnerId, potAmount);
+    res.json(result);
+  } catch (e) {
+    console.error('Finalize hand error:', e);
+    res.status(500).json({ error: 'Failed to finalize hand' });
+  }
+});
+
 // Get hand log
 router.get('/rooms/:roomId/log', async (req, res) => {
   try {
