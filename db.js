@@ -133,8 +133,38 @@ async function init() {
 
     console.log('✅ Tables initialized');
     client.release();
+
+    await ensureAdminAccount();
   } catch (e) {
     console.error('❌ Database init error:', e);
+  }
+}
+
+// Create (or promote) the admin account from ADMIN_USERNAME/ADMIN_PASSWORD env vars.
+// Without this, is_admin is never true for anyone and rake has nowhere to go.
+async function ensureAdminAccount() {
+  const username = process.env.ADMIN_USERNAME;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!username || !password) {
+    console.log('ℹ️  ADMIN_USERNAME/ADMIN_PASSWORD not set — skipping admin bootstrap');
+    return;
+  }
+
+  const bcrypt = require('bcryptjs');
+  const { v4: uuidv4 } = require('uuid');
+
+  const existing = await pool.query('SELECT id, is_admin FROM users WHERE username = $1', [username]);
+
+  if (existing.rows.length === 0) {
+    const passwordHash = await bcrypt.hash(password, 10);
+    await pool.query(
+      'INSERT INTO users (id, username, password_hash, is_admin) VALUES ($1, $2, $3, true)',
+      [uuidv4(), username, passwordHash]
+    );
+    console.log(`✅ Created admin account "${username}"`);
+  } else if (!existing.rows[0].is_admin) {
+    await pool.query('UPDATE users SET is_admin = true WHERE id = $1', [existing.rows[0].id]);
+    console.log(`✅ Promoted existing account "${username}" to admin`);
   }
 }
 
