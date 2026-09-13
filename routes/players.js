@@ -17,6 +17,38 @@ router.get('/room/:roomId', async (req, res) => {
   }
 });
 
+// Get my transaction/hand history (wins, losses, admin adjustments)
+router.get('/me/history', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('Get my history error:', e);
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+// Get my overall stats (hands played, net won/lost)
+router.get('/me/stats', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE type = 'win') as hands_won,
+         COUNT(*) FILTER (WHERE type = 'loss') as hands_lost,
+         COALESCE(SUM(amount) FILTER (WHERE type IN ('win','loss')), 0) as net_result
+       FROM transactions WHERE user_id = $1`,
+      [req.user.id]
+    );
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('Get my stats error:', e);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
 // Get player
 router.get('/:playerId', async (req, res) => {
   try {

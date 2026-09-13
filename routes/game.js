@@ -22,11 +22,11 @@ router.post('/rooms/:roomId/deal', async (req, res) => {
   }
 });
 
-// Get game state
+// Get game state (hole cards of other players are masked until showdown)
 router.get('/rooms/:roomId/state', async (req, res) => {
   try {
     const state = await gameEngine.getGameState(req.params.roomId);
-    res.json(state);
+    res.json(gameEngine.maskGameStateForUser(state, req.user.id));
   } catch (e) {
     console.error('Get game state error:', e);
     res.status(500).json({ error: 'Failed to fetch game state' });
@@ -42,7 +42,7 @@ router.post('/rooms/:roomId/action', async (req, res) => {
     await gameEngine.handlePlayerAction(roomId, req.user.id, { type, amount });
     const state = await gameEngine.getGameState(roomId);
 
-    res.json(state);
+    res.json(gameEngine.maskGameStateForUser(state, req.user.id));
   } catch (e) {
     console.error('Player action error:', e);
     res.status(400).json({ error: e.message });
@@ -64,6 +64,20 @@ router.post('/rooms/:roomId/finalize', async (req, res) => {
   } catch (e) {
     console.error('Finalize hand error:', e);
     res.status(500).json({ error: 'Failed to finalize hand' });
+  }
+});
+
+// Get full hand-by-hand results (winners, pots, rake) for a room
+router.get('/rooms/:roomId/history', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM hand_results WHERE room_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [req.params.roomId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('Get hand history error:', e);
+    res.status(500).json({ error: 'Failed to fetch hand history' });
   }
 });
 

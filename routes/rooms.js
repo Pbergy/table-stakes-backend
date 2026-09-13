@@ -63,15 +63,51 @@ router.post('/:roomId/join', async (req, res) => {
     const { roomId } = req.params;
     const { seat = null } = req.body;
 
+    const roomResult = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
+    if (roomResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+    const room = roomResult.rows[0];
+
+    // Admin private rooms require an invite (added by the admin from the dashboard)
+    if (room.is_admin_room) {
+      const invite = await pool.query(
+        'SELECT * FROM room_invites WHERE room_id = $1 AND username = $2',
+        [roomId, req.user.username]
+      );
+      if (invite.rows.length === 0 && room.creator_id !== req.user.id) {
+        return res.status(403).json({ error: 'This room is invite-only. Ask the admin to invite you.' });
+      }
+      if (invite.rows.length > 0) {
+        await pool.query('UPDATE room_invites SET status = $1 WHERE id = $2', ['joined', invite.rows[0].id]);
+      }
+    }
+
+    const startingChips = (room.settings && room.settings.startingChips) || 1000;
+
     const result = await pool.query(
-      'INSERT INTO room_players (id, room_id, user_id, seat, chips) VALUES ($1, $2, $3, $4, (SELECT (settings->>"startingChips")::int FROM rooms WHERE id = $3)) RETURNING *',
-      [uuidv4(), roomId, req.user.id, seat]
+      'INSERT INTO room_players (id, room_id, user_id, seat, chips) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [uuidv4(), roomId, req.user.id, seat, startingChips]
     );
 
     res.json(result.rows[0]);
   } catch (e) {
     console.error('Join room error:', e);
     res.status(400).json({ error: 'Failed to join room' });
+  }
+});
+
+// Get chat history for a room
+router.get('/:roomId/chat', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM chat_messages WHERE room_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [req.params.roomId]
+    );
+    res.json(result.rows.reverse());
+  } catch (e) {
+    console.error('Get chat error:', e);
+    res.status(500).json({ error: 'Failed to fetch chat' });
   }
 });
 
