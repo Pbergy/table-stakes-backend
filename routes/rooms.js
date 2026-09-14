@@ -38,6 +38,18 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get a single room by ID (used to show the room name/header to anyone seated in it)
+router.get('/id/:roomId', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, room_code, is_admin_room, creator_id FROM rooms WHERE id = $1', [req.params.roomId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('Get room by id error:', e);
+    res.status(500).json({ error: 'Failed to fetch room' });
+  }
+});
+
 // Get rooms I've been invited to (admin private tables)
 router.get('/invited', async (req, res) => {
   try {
@@ -102,6 +114,16 @@ router.post('/:roomId/join', async (req, res) => {
     }
 
     const startingChips = (room.settings && room.settings.startingChips) || 1000;
+
+    // Stay seated across sessions: rejoining a room you're already in should never create
+    // a second seat/stack — just hand back your existing spot with your persisted chips.
+    const already = await pool.query(
+      'SELECT * FROM room_players WHERE room_id = $1 AND user_id = $2',
+      [roomId, req.user.id]
+    );
+    if (already.rows.length > 0) {
+      return res.json(already.rows[0]);
+    }
 
     const result = await pool.query(
       'INSERT INTO room_players (id, room_id, user_id, seat, chips) VALUES ($1, $2, $3, $4, $5) RETURNING *',
