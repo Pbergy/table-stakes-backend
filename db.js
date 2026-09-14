@@ -157,15 +157,40 @@ async function ensureAdminAccount() {
 
   if (existing.rows.length === 0) {
     const passwordHash = await bcrypt.hash(password, 10);
+    const adminId = uuidv4();
     await pool.query(
       'INSERT INTO users (id, username, password_hash, is_admin) VALUES ($1, $2, $3, true)',
-      [uuidv4(), username, passwordHash]
+      [adminId, username, passwordHash]
     );
     console.log(`✅ Created admin account "${username}"`);
+    await ensureDefaultPrivateRoom(adminId);
   } else if (!existing.rows[0].is_admin) {
     await pool.query('UPDATE users SET is_admin = true WHERE id = $1', [existing.rows[0].id]);
     console.log(`✅ Promoted existing account "${username}" to admin`);
+    await ensureDefaultPrivateRoom(existing.rows[0].id);
+  } else {
+    await ensureDefaultPrivateRoom(existing.rows[0].id);
   }
+}
+
+// Give the admin a ready-made invite-only table ("Private 1") so they don't have to
+// create one manually before inviting anyone.
+async function ensureDefaultPrivateRoom(adminId) {
+  const existingRoom = await pool.query(
+    'SELECT id FROM rooms WHERE creator_id = $1 AND is_admin_room = true LIMIT 1',
+    [adminId]
+  );
+  if (existingRoom.rows.length > 0) return;
+
+  const { v4: uuidv4 } = require('uuid');
+  const roomId = uuidv4();
+  const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+  await pool.query(
+    `INSERT INTO rooms (id, name, creator_id, room_code, is_private, is_admin_room, max_players, settings)
+     VALUES ($1, 'Private 1', $2, $3, true, true, 9, '{}')`,
+    [roomId, adminId, roomCode]
+  );
+  console.log(`✅ Created default private room "Private 1" for admin`);
 }
 
 module.exports = { pool, init };

@@ -159,11 +159,16 @@ router.post('/rooms/:roomId/invite', async (req, res) => {
   }
 });
 
-// List invites for a room
+// List invites for a room (includes each invited player's current chip stack, if seated)
 router.get('/rooms/:roomId/invites', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM room_invites WHERE room_id = $1 ORDER BY created_at DESC',
+      `SELECT ri.*, rp.chips
+       FROM room_invites ri
+       LEFT JOIN room_players rp ON rp.room_id = ri.room_id
+         AND rp.user_id = (SELECT id FROM users WHERE username = ri.username)
+       WHERE ri.room_id = $1
+       ORDER BY ri.created_at DESC`,
       [req.params.roomId]
     );
     res.json(result.rows);

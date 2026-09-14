@@ -38,6 +38,24 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get rooms I've been invited to (admin private tables)
+router.get('/invited', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT r.*, ri.status as invite_status
+       FROM room_invites ri
+       JOIN rooms r ON r.id = ri.room_id
+       WHERE ri.username = $1
+       ORDER BY ri.created_at DESC`,
+      [req.user.username]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('Get invited rooms error:', e);
+    res.status(500).json({ error: 'Failed to fetch invited rooms' });
+  }
+});
+
 // Get room by code
 router.get('/:roomCode', async (req, res) => {
   try {
