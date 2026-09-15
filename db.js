@@ -178,9 +178,10 @@ async function ensureAdminAccount() {
 // Give the admin a ready-made invite-only table ("Private 1") so they don't have to
 // create one manually before inviting anyone.
 async function ensureDefaultPrivateRoom(adminId) {
+  // System-wide check (not just this exact admin id) — there's only ever one admin in this
+  // app, so this is a stronger guarantee against ever creating a second "Private 1" table.
   const existingRoom = await pool.query(
-    'SELECT id FROM rooms WHERE creator_id = $1 AND is_admin_room = true LIMIT 1',
-    [adminId]
+    'SELECT id FROM rooms WHERE is_admin_room = true LIMIT 1'
   );
   if (existingRoom.rows.length > 0) return;
 
