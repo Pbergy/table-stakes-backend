@@ -17,7 +17,7 @@ async function init() {
         email VARCHAR(100) UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         is_admin BOOLEAN DEFAULT false,
-        balance INT DEFAULT 0,
+        balance INT DEFAULT 1000,
         total_rake_earned INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()

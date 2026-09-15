@@ -114,10 +114,8 @@ router.post('/:roomId/join', async (req, res) => {
       }
     }
 
-    const startingChips = (room.settings && room.settings.startingChips) || 1000;
-
-    // Stay seated across sessions: rejoining a room you're already in should never create
-    // a second seat/stack — just hand back your existing spot with your persisted chips.
+    // Chips are your account-wide balance now, not a table buy-in — seating you here
+    // doesn't transfer or reset any chips, it just gives you a spot at this table.
     const already = await pool.query(
       'SELECT * FROM room_players WHERE room_id = $1 AND user_id = $2',
       [roomId, req.user.id]
@@ -127,8 +125,8 @@ router.post('/:roomId/join', async (req, res) => {
     }
 
     const result = await pool.query(
-      'INSERT INTO room_players (id, room_id, user_id, seat, chips) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [uuidv4(), roomId, req.user.id, seat, startingChips]
+      'INSERT INTO room_players (id, room_id, user_id, seat, chips) VALUES ($1, $2, $3, $4, 0) RETURNING *',
+      [uuidv4(), roomId, req.user.id, seat]
     );
 
     res.json(result.rows[0]);
@@ -151,7 +149,8 @@ router.post('/:roomId/ready', async (req, res) => {
     );
 
     const seated = await pool.query(
-      'SELECT * FROM room_players WHERE room_id = $1 AND chips > 0 ORDER BY seat',
+      `SELECT rp.*, u.balance as chips FROM room_players rp JOIN users u ON u.id = rp.user_id
+       WHERE rp.room_id = $1 AND u.balance > 0 ORDER BY rp.seat`,
       [roomId]
     );
 

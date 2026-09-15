@@ -94,7 +94,9 @@ async function startHand(roomId) {
     if (room.rows.length === 0) throw new Error('Room not found');
 
     const playersRes = await pool.query(
-      'SELECT * FROM room_players WHERE room_id = $1 AND chips > 0 ORDER BY seat',
+      `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, u.balance as chips
+       FROM room_players rp JOIN users u ON u.id = rp.user_id
+       WHERE rp.room_id = $1 AND u.balance > 0 ORDER BY rp.seat`,
       [roomId]
     );
 
@@ -358,10 +360,10 @@ async function runShowdown(gameState, gameId) {
 async function persistHandResult(gameState, gameId, totalRake, potBreakdown) {
   const roomId = gameState.roomId;
 
-  // Sync every player's final chip stack back to room_players. Previously this table was
-  // never updated during play, so stacks silently drifted from the in-memory game state.
+  // Chips are a single account-wide bankroll now (not scoped to one table), so winnings
+  // and losses write straight to users.balance and follow the player to any table.
   for (const p of gameState.players) {
-    await pool.query('UPDATE room_players SET chips = $1 WHERE room_id = $2 AND user_id = $3', [p.chips, roomId, p.id]);
+    await pool.query('UPDATE users SET balance = $1 WHERE id = $2', [p.chips, p.id]);
   }
 
   // Record a win/loss transaction per participant for hand-history purposes
@@ -442,8 +444,8 @@ async function finalizeHand(roomId, winnerId, potAmount) {
     );
 
     await pool.query(
-      'UPDATE room_players SET chips = chips + $1 WHERE user_id = $2 AND room_id = $3',
-      [winnerPayout, winnerId, roomId]
+      'UPDATE users SET balance = balance + $1 WHERE id = $2',
+      [winnerPayout, winnerId]
     );
 
     await pool.query(

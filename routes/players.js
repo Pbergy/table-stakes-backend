@@ -7,7 +7,9 @@ const router = express.Router();
 router.get('/room/:roomId', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT rp.*, u.username FROM room_players rp JOIN users u ON rp.user_id = u.id WHERE rp.room_id = $1 ORDER BY rp.seat',
+      `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.status, rp.created_at,
+              u.username, u.balance as chips
+       FROM room_players rp JOIN users u ON rp.user_id = u.id WHERE rp.room_id = $1 ORDER BY rp.seat`,
       [req.params.roomId]
     );
     res.json(result.rows);
@@ -42,7 +44,8 @@ router.get('/me/stats', async (req, res) => {
        FROM transactions WHERE user_id = $1`,
       [req.user.id]
     );
-    res.json(result.rows[0]);
+    const balanceResult = await pool.query('SELECT balance FROM users WHERE id = $1', [req.user.id]);
+    res.json({ ...result.rows[0], balance: balanceResult.rows[0]?.balance ?? 0 });
   } catch (e) {
     console.error('Get my stats error:', e);
     res.status(500).json({ error: 'Failed to fetch stats' });
