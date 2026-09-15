@@ -108,4 +108,4 @@ server.listen(process.env.PORT || 3000, async () => {
   console.log('✅ Database initialized');
 });
 
-module.exports = { app, wss, broadcastToRoom };
+module.exports = { app, wss, broadcastToRoom, broadcastPerClient };

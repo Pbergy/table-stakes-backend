@@ -79,6 +79,7 @@ async function init() {
         status VARCHAR(20) DEFAULT 'waiting',
         folded BOOLEAN DEFAULT false,
         all_in BOOLEAN DEFAULT false,
+        is_ready BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(room_id, user_id)
       );
@@ -130,6 +131,7 @@ async function init() {
 
     // Safety net for databases created before this column/table existed
     await client.query(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_admin_room BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE room_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN DEFAULT false;`);
 
     console.log('✅ Tables initialized');
     client.release();

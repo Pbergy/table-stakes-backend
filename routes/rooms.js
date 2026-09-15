@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
+const gameEngine = require('../engine/gameEngine');
 
 const router = express.Router();
 
@@ -134,6 +135,59 @@ router.post('/:roomId/join', async (req, res) => {
   } catch (e) {
     console.error('Join room error:', e);
     res.status(400).json({ error: 'Failed to join room' });
+  }
+});
+
+// Toggle ready status. Once every seated player (with chips) is ready, the hand deals
+// automatically — no one has to click a separate "deal" button.
+router.post('/:roomId/ready', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { ready = true } = req.body;
+
+    await pool.query(
+      'UPDATE room_players SET is_ready = $1 WHERE room_id = $2 AND user_id = $3',
+      [ready, roomId, req.user.id]
+    );
+
+    const seated = await pool.query(
+      'SELECT * FROM room_players WHERE room_id = $1 AND chips > 0 ORDER BY seat',
+      [roomId]
+    );
+
+    const currentGame = await gameEngine.getGameState(roomId);
+    const handInProgress = currentGame && currentGame.stage &&
+      !['complete', 'showdown'].includes(currentGame.stage) && currentGame.status !== 'no_game';
+
+    const allReady = seated.length >= 2 && seated.every(p => p.is_ready);
+
+    let dealt = false;
+    if (allReady && !handInProgress) {
+      await gameEngine.startHand(roomId);
+      await pool.query('UPDATE room_players SET is_ready = false WHERE room_id = $1', [roomId]);
+      dealt = true;
+    }
+
+    // Let everyone at the table see live ready-checkmarks and, if it happened, the new hand.
+    try {
+      const { broadcastPerClient, broadcastToRoom } = require('../server');
+      const players = await pool.query('SELECT user_id, is_ready FROM room_players WHERE room_id = $1', [roomId]);
+      broadcastToRoom(roomId, { type: 'ready_update', players: players.rows });
+      if (dealt) {
+        const state = await gameEngine.getGameState(roomId);
+        broadcastPerClient(roomId, (clientUserId) => ({
+          type: 'game_update',
+          data: gameEngine.maskGameStateForUser(state, clientUserId)
+        }));
+      }
+    } catch (broadcastErr) {
+      console.error('Ready broadcast error:', broadcastErr);
+    }
+
+    res.json({ ready, dealt });
+  } catch (e) {
+    console.error('Ready toggle error:', e);
+    res.status(500).json({ error: 'Failed to update ready status' });
   }
 });
 
