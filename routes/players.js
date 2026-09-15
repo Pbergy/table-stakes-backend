@@ -6,12 +6,22 @@ const router = express.Router();
 // Get room players
 router.get('/room/:roomId', async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.status, rp.created_at,
-              u.username, u.balance as chips
-       FROM room_players rp JOIN users u ON rp.user_id = u.id WHERE rp.room_id = $1 ORDER BY rp.seat`,
-      [req.params.roomId]
-    );
+    const room = await pool.query('SELECT is_admin_room FROM rooms WHERE id = $1', [req.params.roomId]);
+    const isAdminRoom = room.rows[0]?.is_admin_room;
+
+    const result = isAdminRoom
+      ? await pool.query(
+          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.status, rp.created_at,
+                  u.username, rp.chips
+           FROM room_players rp JOIN users u ON rp.user_id = u.id WHERE rp.room_id = $1 ORDER BY rp.seat`,
+          [req.params.roomId]
+        )
+      : await pool.query(
+          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.status, rp.created_at,
+                  u.username, u.balance as chips
+           FROM room_players rp JOIN users u ON rp.user_id = u.id WHERE rp.room_id = $1 ORDER BY rp.seat`,
+          [req.params.roomId]
+        );
     res.json(result.rows);
   } catch (e) {
     console.error('Get players error:', e);

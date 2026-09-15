@@ -143,22 +143,36 @@ router.post('/:roomId/ready', async (req, res) => {
     const { roomId } = req.params;
     const { ready = true } = req.body;
 
+    const roomRes = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
+    if (roomRes.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+    const room = roomRes.rows[0];
+
+    // The admin spectates their own private table and never readies up as a player.
+    if (room.is_admin_room && room.creator_id === req.user.id) {
+      return res.status(400).json({ error: "You're spectating this table, not playing" });
+    }
+
     await pool.query(
       'UPDATE room_players SET is_ready = $1 WHERE room_id = $2 AND user_id = $3',
       [ready, roomId, req.user.id]
     );
 
-    const seated = await pool.query(
-      `SELECT rp.*, u.balance as chips FROM room_players rp JOIN users u ON u.id = rp.user_id
-       WHERE rp.room_id = $1 AND u.balance > 0 ORDER BY rp.seat`,
-      [roomId]
-    );
+    const seated = room.is_admin_room
+      ? await pool.query(
+          'SELECT * FROM room_players WHERE room_id = $1 AND chips > 0 AND user_id != $2 ORDER BY seat',
+          [roomId, room.creator_id]
+        )
+      : await pool.query(
+          `SELECT rp.* FROM room_players rp JOIN users u ON u.id = rp.user_id
+           WHERE rp.room_id = $1 AND u.balance > 0 ORDER BY rp.seat`,
+          [roomId]
+        );
 
     const currentGame = await gameEngine.getGameState(roomId);
     const handInProgress = currentGame && currentGame.stage &&
       !['complete', 'showdown'].includes(currentGame.stage) && currentGame.status !== 'no_game';
 
-    const allReady = seated.length >= 2 && seated.every(p => p.is_ready);
+    const allReady = seated.rows.length >= 2 && seated.rows.every(p => p.is_ready);
 
     let dealt = false;
     if (allReady && !handInProgress) {

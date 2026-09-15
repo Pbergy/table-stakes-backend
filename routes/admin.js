@@ -109,6 +109,42 @@ router.delete('/rooms/:roomId', async (req, res) => {
   }
 });
 
+// Give (or take) chips for a player at your private table — the admin acts as the bank.
+router.post('/rooms/:roomId/give-chips', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { username, amount } = req.body;
+
+    if (!username || !Number.isFinite(Number(amount))) {
+      return res.status(400).json({ error: 'Username and a numeric amount are required' });
+    }
+
+    const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
+    if (room.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+    if (!room.rows[0].is_admin_room || room.rows[0].creator_id !== req.user.id) {
+      return res.status(403).json({ error: 'Only the owner of a private table can grant chips there' });
+    }
+
+    const user = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (user.rows.length === 0) return res.status(404).json({ error: 'No user with that username' });
+
+    const seat = await pool.query('SELECT * FROM room_players WHERE room_id = $1 AND user_id = $2', [roomId, user.rows[0].id]);
+    if (seat.rows.length === 0) {
+      return res.status(400).json({ error: 'That player hasn\'t joined this table yet' });
+    }
+
+    const result = await pool.query(
+      'UPDATE room_players SET chips = GREATEST(chips + $1, 0) WHERE room_id = $2 AND user_id = $3 RETURNING chips',
+      [Number(amount), roomId, user.rows[0].id]
+    );
+
+    res.json({ username, chips: result.rows[0].chips });
+  } catch (e) {
+    console.error('Give chips error:', e);
+    res.status(500).json({ error: 'Failed to update chips' });
+  }
+});
+
 // Create the admin's private invite-only room
 router.post('/rooms', async (req, res) => {
   try {

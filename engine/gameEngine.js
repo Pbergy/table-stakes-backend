@@ -93,12 +93,19 @@ async function startHand(roomId) {
     const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
     if (room.rows.length === 0) throw new Error('Room not found');
 
-    const playersRes = await pool.query(
-      `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, u.balance as chips
-       FROM room_players rp JOIN users u ON u.id = rp.user_id
-       WHERE rp.room_id = $1 AND u.balance > 0 ORDER BY rp.seat`,
-      [roomId]
-    );
+    const playersRes = room.rows[0].is_admin_room
+      ? await pool.query(
+          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.chips
+           FROM room_players rp
+           WHERE rp.room_id = $1 AND rp.chips > 0 AND rp.user_id != $2 ORDER BY rp.seat`,
+          [roomId, room.rows[0].creator_id]
+        )
+      : await pool.query(
+          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, u.balance as chips
+           FROM room_players rp JOIN users u ON u.id = rp.user_id
+           WHERE rp.room_id = $1 AND u.balance > 0 ORDER BY rp.seat`,
+          [roomId]
+        );
 
     if (playersRes.rows.length < 2) throw new Error('Need at least 2 players');
 
@@ -156,7 +163,8 @@ async function startHand(roomId) {
       currentTurnPos: firstToAct,
       needsToAct: players.map((p, i) => i).filter(i => !players[i].folded && !players[i].allIn),
       handNumber,
-      roomId
+      roomId,
+      isAdminRoom: room.rows[0].is_admin_room
     };
 
     const result = await pool.query(
@@ -360,10 +368,15 @@ async function runShowdown(gameState, gameId) {
 async function persistHandResult(gameState, gameId, totalRake, potBreakdown) {
   const roomId = gameState.roomId;
 
-  // Chips are a single account-wide bankroll now (not scoped to one table), so winnings
-  // and losses write straight to users.balance and follow the player to any table.
+  // Regular rooms use the account-wide bankroll (users.balance) so winnings follow the
+  // player everywhere. Admin private rooms use their own per-table chip pool instead —
+  // players start at 0 there and only the admin can grant them chips.
   for (const p of gameState.players) {
-    await pool.query('UPDATE users SET balance = $1 WHERE id = $2', [p.chips, p.id]);
+    if (gameState.isAdminRoom) {
+      await pool.query('UPDATE room_players SET chips = $1 WHERE room_id = $2 AND user_id = $3', [p.chips, roomId, p.id]);
+    } else {
+      await pool.query('UPDATE users SET balance = $1 WHERE id = $2', [p.chips, p.id]);
+    }
   }
 
   // Record a win/loss transaction per participant for hand-history purposes
@@ -443,10 +456,17 @@ async function finalizeHand(roomId, winnerId, potAmount) {
       [winnerId, rakeAmount, 'complete', roomId]
     );
 
-    await pool.query(
-      'UPDATE users SET balance = balance + $1 WHERE id = $2',
-      [winnerPayout, winnerId]
-    );
+    if (room.rows[0].is_admin_room) {
+      await pool.query(
+        'UPDATE room_players SET chips = chips + $1 WHERE room_id = $2 AND user_id = $3',
+        [winnerPayout, roomId, winnerId]
+      );
+    } else {
+      await pool.query(
+        'UPDATE users SET balance = balance + $1 WHERE id = $2',
+        [winnerPayout, winnerId]
+      );
+    }
 
     await pool.query(
       'INSERT INTO transactions (id, user_id, room_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)',
