@@ -54,8 +54,15 @@ router.get('/me/stats', async (req, res) => {
        FROM transactions WHERE user_id = $1`,
       [req.user.id]
     );
-    const balanceResult = await pool.query('SELECT balance FROM users WHERE id = $1', [req.user.id]);
-    res.json({ ...result.rows[0], balance: balanceResult.rows[0]?.balance ?? 0 });
+    const balanceResult = await pool.query('SELECT balance, is_admin FROM users WHERE id = $1', [req.user.id]);
+    res.json({
+      ...result.rows[0],
+      hands_won: Number(result.rows[0].hands_won),
+      hands_lost: Number(result.rows[0].hands_lost),
+      net_result: Number(result.rows[0].net_result),
+      balance: balanceResult.rows[0]?.balance ?? 0,
+      is_admin: balanceResult.rows[0]?.is_admin ?? false
+    });
   } catch (e) {
     console.error('Get my stats error:', e);
     res.status(500).json({ error: 'Failed to fetch stats' });
