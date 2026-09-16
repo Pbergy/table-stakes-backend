@@ -23,7 +23,7 @@ router.post('/register', async (req, res) => {
       [userId, username, email, passwordHash]
     );
 
-    const token = jwt.sign({ id: userId, username, is_admin: false }, process.env.SESSION_SECRET || 'dev-secret');
+    const token = jwt.sign({ id: userId, username, is_admin: false }, process.env.SESSION_SECRET || 'dev-secret', { expiresIn: '30d' });
     res.json({ token, user: result.rows[0] });
   } catch (e) {
     console.error('Register error:', e);
@@ -61,7 +61,8 @@ router.post('/login', async (req, res) => {
 
     const token = jwt.sign(
       { id: user.id, username: user.username, is_admin: user.is_admin },
-      process.env.SESSION_SECRET || 'dev-secret'
+      process.env.SESSION_SECRET || 'dev-secret',
+      { expiresIn: '30d' }
     );
 
     res.json({

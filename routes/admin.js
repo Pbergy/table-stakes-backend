@@ -109,6 +109,51 @@ router.delete('/rooms/:roomId', async (req, res) => {
   }
 });
 
+// List all users so the admin can manage account-wide chip balances directly
+router.get('/users', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, username, balance, is_admin, created_at FROM users ORDER BY created_at DESC'
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('List users error:', e);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Give (or take, with a negative amount) chips on a user's account-wide balance.
+// New accounts start at 0 — this is the only way anyone gets chips outside of winning them.
+router.post('/users/:username/give-chips', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { amount } = req.body;
+
+    if (!Number.isFinite(Number(amount)) || Number(amount) === 0) {
+      return res.status(400).json({ error: 'A non-zero numeric amount is required' });
+    }
+
+    const user = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (user.rows.length === 0) return res.status(404).json({ error: 'No user with that username' });
+
+    const result = await pool.query(
+      'UPDATE users SET balance = GREATEST(balance + $1, 0) WHERE id = $2 RETURNING balance',
+      [Number(amount), user.rows[0].id]
+    );
+
+    await pool.query(
+      'INSERT INTO transactions (id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)',
+      [uuidv4(), user.rows[0].id, Number(amount), Number(amount) > 0 ? 'admin_grant' : 'admin_deduction',
+       `${Number(amount) > 0 ? 'Granted' : 'Deducted'} ${Math.abs(amount)} chips by admin`]
+    );
+
+    res.json({ username, balance: result.rows[0].balance });
+  } catch (e) {
+    console.error('Give account chips error:', e);
+    res.status(500).json({ error: 'Failed to update balance' });
+  }
+});
+
 // Give (or take) chips for a player at your private table — the admin acts as the bank.
 router.post('/rooms/:roomId/give-chips', async (req, res) => {
   try {
@@ -136,6 +181,12 @@ router.post('/rooms/:roomId/give-chips', async (req, res) => {
     const result = await pool.query(
       'UPDATE room_players SET chips = GREATEST(chips + $1, 0) WHERE room_id = $2 AND user_id = $3 RETURNING chips',
       [Number(amount), roomId, user.rows[0].id]
+    );
+
+    await pool.query(
+      'INSERT INTO transactions (id, user_id, room_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)',
+      [uuidv4(), user.rows[0].id, roomId, Number(amount), Number(amount) > 0 ? 'admin_grant' : 'admin_deduction',
+       `${Number(amount) > 0 ? 'Granted' : 'Deducted'} ${Math.abs(amount)} chips at ${room.rows[0].name}`]
     );
 
     res.json({ username, chips: result.rows[0].chips });

@@ -29,6 +29,29 @@ router.get('/room/:roomId', async (req, res) => {
   }
 });
 
+// Leaderboard: net chips won/lost across all rooms, all time
+router.get('/leaderboard', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.username,
+              COALESCE(SUM(t.amount) FILTER (WHERE t.type IN ('win','loss')), 0) as net_result,
+              COUNT(*) FILTER (WHERE t.type = 'win') as hands_won
+       FROM users u LEFT JOIN transactions t ON t.user_id = u.id
+       WHERE u.is_admin = false
+       GROUP BY u.id, u.username
+       ORDER BY net_result DESC`
+    );
+    res.json(result.rows.map(r => ({
+      username: r.username,
+      netResult: Number(r.net_result),
+      handsWon: Number(r.hands_won)
+    })));
+  } catch (e) {
+    console.error('Leaderboard error:', e);
+    res.status(500).json({ error: 'Failed to fetch leaderboard' });
+  }
+});
+
 // Get my transaction/hand history (wins, losses, admin adjustments)
 router.get('/me/history', async (req, res) => {
   try {

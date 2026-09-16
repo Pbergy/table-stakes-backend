@@ -218,11 +218,30 @@ router.get('/:roomId/chat', async (req, res) => {
   }
 });
 
-// Leave room
+// Leave room. For a private (admin) table, this cashes out your table chips back to
+// your account-wide balance first — otherwise leaving would just strand them there forever.
 router.post('/:roomId/leave', async (req, res) => {
   try {
+    const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [req.params.roomId]);
+    if (room.rows.length > 0 && room.rows[0].is_admin_room) {
+      const seat = await pool.query(
+        'SELECT chips FROM room_players WHERE room_id = $1 AND user_id = $2',
+        [req.params.roomId, req.user.id]
+      );
+      const cashedOut = seat.rows[0]?.chips || 0;
+      if (cashedOut > 0) {
+        await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [cashedOut, req.user.id]);
+        await pool.query(
+          'INSERT INTO transactions (id, user_id, room_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)',
+          [uuidv4(), req.user.id, req.params.roomId, cashedOut, 'cash_out', `Cashed out ${cashedOut} chips from ${room.rows[0].name}`]
+        );
+      }
+      await pool.query('DELETE FROM room_players WHERE room_id = $1 AND user_id = $2', [req.params.roomId, req.user.id]);
+      return res.json({ ok: true, cashedOut });
+    }
+
     await pool.query('DELETE FROM room_players WHERE room_id = $1 AND user_id = $2', [req.params.roomId, req.user.id]);
-    res.json({ ok: true });
+    res.json({ ok: true, cashedOut: 0 });
   } catch (e) {
     console.error('Leave room error:', e);
     res.status(500).json({ error: 'Failed to leave room' });

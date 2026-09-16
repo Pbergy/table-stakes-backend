@@ -17,7 +17,7 @@ async function init() {
         email VARCHAR(100) UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         is_admin BOOLEAN DEFAULT false,
-        balance INT DEFAULT 100,
+        balance INT DEFAULT 0,
         total_rake_earned INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
@@ -136,7 +136,7 @@ async function init() {
     // have existed from day one). Cover every column explicitly so this can't recur.
     const migrations = [
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false`,
-      `ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INT DEFAULT 100`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INT DEFAULT 0`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS total_rake_earned INT DEFAULT 0`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(100)`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,

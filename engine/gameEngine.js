@@ -4,6 +4,7 @@ const handEvaluator = require('./handEvaluator');
 
 const RANK_CHAR = { 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '10', 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
 const SUIT_CHAR = { S: '♠', H: '♥', D: '♦', C: '♣' };
+const TURN_TIME_LIMIT_MS = 45000;
 
 function makeDeck() {
   const suits = ['S', 'H', 'D', 'C'];
@@ -161,6 +162,7 @@ async function startHand(roomId) {
       sbPos,
       bbPos,
       currentTurnPos: firstToAct,
+      turnStartedAt: Date.now(),
       needsToAct: players.map((p, i) => i).filter(i => !players[i].folded && !players[i].allIn),
       handNumber,
       roomId,
@@ -267,6 +269,7 @@ async function handlePlayerAction(roomId, userId, action) {
       await closeStreetAndAdvance(gameState, gameRow.id, false);
     } else {
       gameState.currentTurnPos = nextActivePos(gameState.players, pos);
+      gameState.turnStartedAt = Date.now();
     }
 
     await pool.query(
@@ -316,6 +319,7 @@ async function closeStreetAndAdvance(gameState, gameId, singleWinner) {
     .map((p, i) => i)
     .filter(i => !gameState.players[i].folded && !gameState.players[i].allIn);
   gameState.currentTurnPos = nextActivePos(gameState.players, gameState.dealerPos);
+  gameState.turnStartedAt = Date.now();
 }
 
 async function runShowdown(gameState, gameId) {
@@ -563,5 +567,6 @@ module.exports = {
   getPendingRakeForAdmin,
   depositPendingRakeToAdmin,
   maskGameStateForUser,
-  makeDeck
+  makeDeck,
+  TURN_TIME_LIMIT_MS
 };

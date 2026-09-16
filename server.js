@@ -1,7 +1,7 @@
 const express = require('express');
-const session = require('express-session');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const rateLimit = require('express-rate-limit');
 const WebSocket = require('ws');
 const http = require('http');
 const { v4: uuidv4 } = require('uuid');
@@ -19,15 +19,21 @@ const wss = new WebSocket.Server({ server });
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:3001', credentials: true }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'dev-secret',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, sameSite: 'lax' }
-}));
 app.use(express.static('public'));
 
-app.use('/api/auth', require('./routes/auth'));
+// Auth uses signed JWTs, not cookies, so there's no session store to maintain here —
+// this app previously ran an unused express-session instance whose in-memory store was
+// actively warning about production memory leaks in the logs for no benefit.
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many attempts — please wait a few minutes and try again' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+app.use('/api/auth', authLimiter, require('./routes/auth'));
 app.use('/api/rooms', authMiddleware, require('./routes/rooms'));
 app.use('/api/players', authMiddleware, require('./routes/players'));
 app.use('/api/game', authMiddleware, require('./routes/game'));
@@ -99,6 +105,44 @@ function broadcastPerClient(roomId, buildMessageForUser) {
     }
   });
 }
+
+// Turn clock: any player who sits on their turn past the time limit gets auto-folded (or
+// auto-checked if there's nothing to call) so one slow/AFK player can't stall the table.
+setInterval(async () => {
+  try {
+    const active = await pool.query(
+      `SELECT DISTINCT ON (room_id) room_id, stage, game_state
+       FROM games ORDER BY room_id, created_at DESC`
+    );
+    for (const row of active.rows) {
+      if (['complete', 'showdown'].includes(row.stage)) continue;
+      const gs = row.game_state;
+      if (!gs || !gs.turnStartedAt) continue;
+      if (Date.now() - gs.turnStartedAt < gameEngine.TURN_TIME_LIMIT_MS) continue;
+
+      const player = gs.players[gs.currentTurnPos];
+      if (!player) continue;
+      const actionType = gs.currentBet > player.committed ? 'fold' : 'check';
+
+      try {
+        await gameEngine.handlePlayerAction(row.room_id, player.id, { type: actionType });
+        const state = await gameEngine.getGameState(row.room_id);
+        broadcastPerClient(row.room_id, (clientUserId) => ({
+          type: 'game_update',
+          data: gameEngine.maskGameStateForUser(state, clientUserId)
+        }));
+        broadcastToRoom(row.room_id, { type: 'chat', username: 'Table', message: `${actionType === 'fold' ? 'Folded' : 'Checked'} — time expired` });
+        if (state.stage === 'complete') {
+          broadcastToRoom(row.room_id, { type: 'hand_complete', data: state.game_state?.potBreakdown || null });
+        }
+      } catch (actionErr) {
+        console.error('Auto-fold error for room', row.room_id, actionErr.message);
+      }
+    }
+  } catch (e) {
+    console.error('Turn timer sweep error:', e);
+  }
+}, 3000);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
