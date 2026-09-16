@@ -129,9 +129,45 @@ async function init() {
       );
     `);
 
-    // Safety net for databases created before this column/table existed
-    await client.query(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_admin_room BOOLEAN DEFAULT false;`);
-    await client.query(`ALTER TABLE room_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN DEFAULT false;`);
+    // Safety net: CREATE TABLE IF NOT EXISTS is a no-op when the table already exists,
+    // so if this database's tables were first created by an older version of this schema,
+    // newer columns silently never get added — that's exactly what happened here (this
+    // database was missing users.balance and games.rake_collected, columns that should
+    // have existed from day one). Cover every column explicitly so this can't recur.
+    const migrations = [
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INT DEFAULT 100`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS total_rake_earned INT DEFAULT 0`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(100)`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
+
+      `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_admin_room BOOLEAN DEFAULT false`,
+      `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT true`,
+      `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_players INT DEFAULT 9`,
+      `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'waiting'`,
+      `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS settings JSONB DEFAULT '{}'`,
+      `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS admin_rake_percent FLOAT DEFAULT 8.0`,
+      `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
+
+      `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN DEFAULT false`,
+      `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS chips INT DEFAULT 0`,
+      `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'waiting'`,
+      `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS folded BOOLEAN DEFAULT false`,
+      `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS all_in BOOLEAN DEFAULT false`,
+
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS stage VARCHAR(20) DEFAULT 'preflop'`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS dealer_seat INT`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS community_cards JSONB DEFAULT '[]'`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS pot INT DEFAULT 0`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS side_pots JSONB DEFAULT '[]'`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS game_state JSONB DEFAULT '{}'`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS winner_id UUID REFERENCES users(id)`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS rake_collected INT DEFAULT 0`,
+      `ALTER TABLE games ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`
+    ];
+    for (const sql of migrations) {
+      await client.query(sql);
+    }
 
     console.log('✅ Tables initialized');
     client.release();
