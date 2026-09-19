@@ -1,15 +1,25 @@
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 
-const authMiddleware = (req, res, next) => {
+// Re-checks the account against the database on every request rather than trusting only
+// the JWT's signature — this is what lets a ban take effect immediately instead of only
+// the next time someone logs in, and is also what catches a deleted/nonexistent account.
+const authMiddleware = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
-  
+
   if (!token) {
     return res.status(401).json({ error: 'No token provided' });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.SESSION_SECRET || 'dev-secret');
+    const result = await pool.query('SELECT id, is_banned FROM users WHERE id = $1', [decoded.id]);
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Account no longer exists' });
+    }
+    if (result.rows[0].is_banned) {
+      return res.status(403).json({ error: 'This account has been banned' });
+    }
     req.user = decoded;
     next();
   } catch (e) {

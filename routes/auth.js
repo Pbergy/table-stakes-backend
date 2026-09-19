@@ -47,6 +47,10 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    if (user.is_banned) {
+      return res.status(403).json({ error: 'This account has been banned' });
+    }
+
     // If admin, deposit pending rake earnings
     let depositResult = null;
     if (user.is_admin) {

@@ -109,11 +109,31 @@ router.delete('/rooms/:roomId', async (req, res) => {
   }
 });
 
+// Ban or unban a user. This is deliberately a ban rather than a hard delete — the user
+// may be referenced by historical hands, transactions, and rooms they created, and
+// removing those rows would corrupt everyone else's game history.
+router.post('/users/:username/ban', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { banned = true } = req.body;
+
+    const user = await pool.query('SELECT id, is_admin FROM users WHERE username = $1', [username]);
+    if (user.rows.length === 0) return res.status(404).json({ error: 'No user with that username' });
+    if (user.rows[0].is_admin) return res.status(400).json({ error: "Can't ban an admin account" });
+
+    await pool.query('UPDATE users SET is_banned = $1 WHERE id = $2', [banned, user.rows[0].id]);
+    res.json({ username, banned });
+  } catch (e) {
+    console.error('Ban user error:', e);
+    res.status(500).json({ error: 'Failed to update ban status' });
+  }
+});
+
 // List all users so the admin can manage account-wide chip balances directly
 router.get('/users', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username, balance, is_admin, created_at FROM users ORDER BY created_at DESC'
+      'SELECT id, username, balance, is_admin, is_banned, created_at FROM users ORDER BY created_at DESC'
     );
     res.json(result.rows);
   } catch (e) {

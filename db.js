@@ -136,6 +136,7 @@ async function init() {
     // have existed from day one). Cover every column explicitly so this can't recur.
     const migrations = [
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false`,
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS balance INT DEFAULT 0`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS total_rake_earned INT DEFAULT 0`,
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(100)`,

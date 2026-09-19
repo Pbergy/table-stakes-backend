@@ -32,9 +32,10 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 10px;
     }
     .user-item .controls {
-      display: flex; gap: 10px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
     }
     button {
       background: #cda149;
@@ -72,13 +73,25 @@
       color: #cda149;
       font-weight: bold;
     }
+    .hidden { display: none !important; }
+    #loginBox { max-width: 340px; margin: 80px auto; }
+    .small-amount { width: 80px; margin: 0; }
+    .error-msg { color: #ff9aa8; font-size: 13px; min-height: 18px; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>♠ The Backroom — Admin Dashboard</h1>
-    
-    <div class="dashboard">
+
+    <div id="loginBox" class="card">
+      <h2>Admin Login</h2>
+      <input type="text" id="loginUsername" placeholder="Username">
+      <input type="password" id="loginPassword" placeholder="Password">
+      <button onclick="doLogin()" style="width:100%;">Log In</button>
+      <p class="error-msg" id="loginError"></p>
+    </div>
+
+    <div id="dashboardBox" class="dashboard hidden">
       <!-- Stats -->
       <div class="card">
         <h2>Overview</h2>
@@ -94,25 +107,14 @@
           <span>Players In Game</span>
           <span class="stat-value" id="playerCount">0</span>
         </div>
+        <button onclick="logout()" class="danger" style="width:100%; margin-top:10px;">Log Out</button>
       </div>
 
       <!-- Users Management -->
       <div class="card">
         <h2>Users</h2>
         <div class="section">
-          <input type="text" id="searchUser" placeholder="Search username...">
           <div class="users-list" id="usersList"></div>
-        </div>
-      </div>
-
-      <!-- Give Chips -->
-      <div class="card">
-        <h2>Give Chips to Player</h2>
-        <div class="section">
-          <input type="text" id="chipUserId" placeholder="User ID">
-          <input type="text" id="chipRoomId" placeholder="Room ID">
-          <input type="number" id="chipAmount" placeholder="Chip amount">
-          <button onclick="giveChips()">Give Chips</button>
         </div>
       </div>
 
@@ -125,23 +127,74 @@
   </div>
 
   <script>
-    const API = 'http://localhost:3000/api';
-    const token = localStorage.getItem('adminToken');
+    const API = '/api'; // same origin as this page — no separate host to configure
+    let token = localStorage.getItem('adminToken');
+    let refreshTimer = null;
+
+    async function doLogin() {
+      const username = document.getElementById('loginUsername').value;
+      const password = document.getElementById('loginPassword').value;
+      const errEl = document.getElementById('loginError');
+      errEl.textContent = '';
+      try {
+        const res = await fetch(`${API}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Login failed');
+        if (!data.user.is_admin) throw new Error('This account is not an admin');
+        token = data.token;
+        localStorage.setItem('adminToken', token);
+        showDashboard();
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('adminToken');
+      token = null;
+      if (refreshTimer) clearInterval(refreshTimer);
+      document.getElementById('dashboardBox').classList.add('hidden');
+      document.getElementById('loginBox').classList.remove('hidden');
+    }
+
+    function showDashboard() {
+      document.getElementById('loginBox').classList.add('hidden');
+      document.getElementById('dashboardBox').classList.remove('hidden');
+      loadDashboard();
+      if (!refreshTimer) refreshTimer = setInterval(loadDashboard, 5000);
+    }
+
+    async function authedFetch(path, options = {}) {
+      const res = await fetch(`${API}${path}`, {
+        ...options,
+        headers: { ...(options.headers || {}), 'Authorization': `Bearer ${token}` }
+      });
+      if (res.status === 401 || res.status === 403) {
+        logout();
+        throw new Error('Session expired — please log in again');
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+      return data;
+    }
 
     async function loadDashboard() {
       try {
-        const users = await fetch(`${API}/admin/users`, { headers: { 'Authorization': `Bearer ${token}` } }).then(r => r.json());
-        const rooms = await fetch(`${API}/admin/rooms`, { headers: { 'Authorization': `Bearer ${token}` } }).then(r => r.json());
+        const users = await authedFetch('/admin/users');
+        const rooms = await authedFetch('/admin/rooms');
 
         document.getElementById('userCount').textContent = users.length;
         document.getElementById('roomCount').textContent = rooms.length;
-        document.getElementById('playerCount').textContent = rooms.reduce((sum, r) => sum + (r.player_count || 0), 0);
+        document.getElementById('playerCount').textContent = rooms.reduce((sum, r) => sum + (Number(r.player_count) || 0), 0);
 
         renderUsers(users);
         renderRooms(rooms);
       } catch (e) {
         console.error('Load error:', e);
-        alert('Failed to load dashboard');
       }
     }
 
@@ -152,9 +205,14 @@
           <div>
             <strong>${u.username}</strong>
             ${u.is_admin ? ' <span style="color: #cda149;">[ADMIN]</span>' : ''}
+            ${u.is_banned ? ' <span style="color: #ff9aa8;">[BANNED]</span>' : ''}
+            <br><small>${u.balance} chips</small>
           </div>
           <div class="controls">
-            <button onclick="removeUser('${u.id}')">Remove</button>
+            <input type="number" class="small-amount" id="amt-${u.username}" placeholder="amount" min="0">
+            <button onclick="adjustChips('${u.username}', 1)">Give</button>
+            <button onclick="adjustChips('${u.username}', -1)" class="danger">Take</button>
+            ${!u.is_admin ? `<button onclick="toggleBan('${u.username}', ${!u.is_banned})" class="${u.is_banned ? '' : 'danger'}">${u.is_banned ? 'Unban' : 'Ban'}</button>` : ''}
           </div>
         </div>
       `).join('');
@@ -166,7 +224,7 @@
         <div class="user-item">
           <div>
             <strong>${r.name}</strong><br>
-            <small>Code: ${r.room_code} | Players: ${r.player_count || 0}</small>
+            <small>Code: ${r.room_code} | Players: ${r.player_count || 0}${r.is_admin_room ? ' | Private' : ''}</small>
           </div>
           <div class="controls">
             <button class="danger" onclick="deleteRoom('${r.id}')">Delete</button>
@@ -175,55 +233,47 @@
       `).join('');
     }
 
-    async function giveChips() {
-      const userId = document.getElementById('chipUserId').value;
-      const roomId = document.getElementById('chipRoomId').value;
-      const amount = parseInt(document.getElementById('chipAmount').value);
-
-      if (!userId || !roomId || !amount) {
-        alert('Fill all fields');
-        return;
-      }
-
+    async function adjustChips(username, sign) {
+      const input = document.getElementById(`amt-${username}`);
+      const amount = Math.abs(Number(input.value)) * sign;
+      if (!amount) return;
       try {
-        await fetch(`${API}/admin/users/${userId}/chips`, {
+        await authedFetch(`/admin/users/${username}/give-chips`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount, roomId })
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount })
         });
-        alert('Chips given!');
         loadDashboard();
       } catch (e) {
         alert('Failed: ' + e.message);
       }
     }
 
-    async function removeUser(userId) {
-      if (!confirm('Remove this user?')) return;
+    async function toggleBan(username, banned) {
+      if (!confirm(`${banned ? 'Ban' : 'Unban'} ${username}?`)) return;
       try {
-        // Implement user deletion in backend if needed
-        alert('User removal not yet implemented');
+        await authedFetch(`/admin/users/${username}/ban`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ banned })
+        });
+        loadDashboard();
       } catch (e) {
         alert('Failed: ' + e.message);
       }
     }
 
     async function deleteRoom(roomId) {
-      if (!confirm('Delete this room?')) return;
+      if (!confirm('Delete this room? Everyone seated in it will be removed.')) return;
       try {
-        await fetch(`${API}/admin/rooms/${roomId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        alert('Room deleted!');
+        await authedFetch(`/admin/rooms/${roomId}`, { method: 'DELETE' });
         loadDashboard();
       } catch (e) {
         alert('Failed: ' + e.message);
       }
     }
 
-    loadDashboard();
-    setInterval(loadDashboard, 5000); // Refresh every 5s
+    if (token) { showDashboard(); }
   </script>
 </body>
 </html>
