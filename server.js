@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
 const WebSocket = require('ws');
 const http = require('http');
 const { v4: uuidv4 } = require('uuid');
@@ -40,16 +41,33 @@ app.use('/api/game', authMiddleware, require('./routes/game'));
 app.use('/api/admin', authMiddleware, adminMiddleware, require('./routes/admin'));
 
 // WebSocket connection handler.
-// Each socket tracks its own userId/roomId so broadcasts only go to clients
-// actually sitting at that table (previously this fanned out to every open
-// connection on the server, leaking one room's cards/actions into another's).
-wss.on('connection', (ws) => {
+// The connection itself is authenticated with a verified JWT (passed as a query param)
+// rather than trusting whatever userId a message claims — previously any client could
+// send an action or chat message as any userId with zero verification.
+wss.on('connection', async (ws, req) => {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const token = url.searchParams.get('token');
+    if (!token) { ws.close(4001, 'No token provided'); return; }
+
+    const decoded = jwt.verify(token, process.env.SESSION_SECRET || 'dev-secret');
+    const userCheck = await pool.query('SELECT is_banned FROM users WHERE id = $1', [decoded.id]);
+    if (userCheck.rows.length === 0 || userCheck.rows[0].is_banned) {
+      ws.close(4003, 'Unauthorized');
+      return;
+    }
+    ws.userId = decoded.id; // verified identity — every handler below uses this, never a client-supplied value
+  } catch (e) {
+    ws.close(4001, 'Invalid or expired token');
+    return;
+  }
+
   ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
-      const { type, userId, roomId, payload } = data;
+      const { type, roomId, payload } = data;
+      const userId = ws.userId;
 
-      ws.userId = userId;
       ws.roomId = roomId;
 
       if (type === 'action') {
