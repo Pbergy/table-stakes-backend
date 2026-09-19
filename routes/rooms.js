@@ -42,7 +42,7 @@ router.get('/', async (req, res) => {
 // Get a single room by ID (used to show the room name/header to anyone seated in it)
 router.get('/id/:roomId', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, name, room_code, is_admin_room, creator_id FROM rooms WHERE id = $1', [req.params.roomId]);
+    const result = await pool.query('SELECT id, name, room_code, is_admin_room, creator_id, max_players FROM rooms WHERE id = $1', [req.params.roomId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
     res.json(result.rows[0]);
   } catch (e) {
