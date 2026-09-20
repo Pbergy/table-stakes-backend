@@ -11,13 +11,13 @@ router.get('/room/:roomId', async (req, res) => {
 
     const result = isAdminRoom
       ? await pool.query(
-          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.status, rp.created_at,
+          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.wants_to_play, rp.status, rp.created_at,
                   u.username, rp.chips
            FROM room_players rp JOIN users u ON rp.user_id = u.id WHERE rp.room_id = $1 ORDER BY rp.seat`,
           [req.params.roomId]
         )
       : await pool.query(
-          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.status, rp.created_at,
+          `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.is_ready, rp.wants_to_play, rp.status, rp.created_at,
                   u.username, u.balance as chips
            FROM room_players rp JOIN users u ON rp.user_id = u.id WHERE rp.room_id = $1 ORDER BY rp.seat`,
           [req.params.roomId]

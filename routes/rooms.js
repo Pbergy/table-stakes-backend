@@ -124,15 +124,55 @@ router.post('/:roomId/join', async (req, res) => {
       return res.json(already.rows[0]);
     }
 
+    // The admin joins their own private table as a spectator by default — they opt into
+    // a hand explicitly via the "Join Hand" control rather than being dealt in automatically.
+    const wantsToPlay = !(room.is_admin_room && room.creator_id === req.user.id);
+
     const result = await pool.query(
-      'INSERT INTO room_players (id, room_id, user_id, seat, chips) VALUES ($1, $2, $3, $4, 0) RETURNING *',
-      [uuidv4(), roomId, req.user.id, seat]
+      'INSERT INTO room_players (id, room_id, user_id, seat, chips, wants_to_play) VALUES ($1, $2, $3, $4, 0, $5) RETURNING *',
+      [uuidv4(), roomId, req.user.id, seat, wantsToPlay]
     );
 
     res.json(result.rows[0]);
   } catch (e) {
     console.error('Join room error:', e);
     res.status(400).json({ error: 'Failed to join room' });
+  }
+});
+
+// Opt in or out of being dealt into hands at this table (used by the admin to switch
+// between spectating their own private table and actually playing a hand). If you're
+// currently in a hand and opt out, you're force-folded out of it immediately.
+router.post('/:roomId/play', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { playing = true } = req.body;
+
+    await pool.query(
+      'UPDATE room_players SET wants_to_play = $1 WHERE room_id = $2 AND user_id = $3',
+      [playing, roomId, req.user.id]
+    );
+
+    if (!playing) {
+      await gameEngine.forceFoldFromHand(roomId, req.user.id);
+    }
+
+    try {
+      const { broadcastToRoom, broadcastPerClient } = require('../server');
+      const state = await gameEngine.getGameState(roomId);
+      broadcastPerClient(roomId, (clientUserId) => ({
+        type: 'game_update',
+        data: gameEngine.maskGameStateForUser(state, clientUserId)
+      }));
+      broadcastToRoom(roomId, { type: 'presence', userId: req.user.id, joined: true });
+    } catch (broadcastErr) {
+      console.error('Play-toggle broadcast error:', broadcastErr);
+    }
+
+    res.json({ playing });
+  } catch (e) {
+    console.error('Toggle play error:', e);
+    res.status(500).json({ error: 'Failed to update play status' });
   }
 });
 
@@ -147,9 +187,14 @@ router.post('/:roomId/ready', async (req, res) => {
     if (roomRes.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
     const room = roomRes.rows[0];
 
-    // The admin spectates their own private table and never readies up as a player.
-    if (room.is_admin_room && room.creator_id === req.user.id) {
-      return res.status(400).json({ error: "You're spectating this table, not playing" });
+    if (room.is_admin_room) {
+      const mySeat = await pool.query(
+        'SELECT wants_to_play FROM room_players WHERE room_id = $1 AND user_id = $2',
+        [roomId, req.user.id]
+      );
+      if (mySeat.rows.length === 0 || !mySeat.rows[0].wants_to_play) {
+        return res.status(400).json({ error: "You're spectating this table — click Join Hand to play" });
+      }
     }
 
     await pool.query(
@@ -159,8 +204,8 @@ router.post('/:roomId/ready', async (req, res) => {
 
     const seated = room.is_admin_room
       ? await pool.query(
-          'SELECT * FROM room_players WHERE room_id = $1 AND chips > 0 AND user_id != $2 ORDER BY seat',
-          [roomId, room.creator_id]
+          'SELECT * FROM room_players WHERE room_id = $1 AND chips > 0 AND wants_to_play = true ORDER BY seat',
+          [roomId]
         )
       : await pool.query(
           `SELECT rp.* FROM room_players rp JOIN users u ON u.id = rp.user_id

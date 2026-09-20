@@ -1,19 +1,9 @@
 const express = require('express');
 const { pool } = require('../db');
 const { v4: uuidv4 } = require('uuid');
+const gameEngine = require('../engine/gameEngine');
 
 const router = express.Router();
-
-// Get all users
-router.get('/users', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT id, username, email, is_admin, balance, total_rake_earned, created_at FROM users ORDER BY created_at DESC');
-    res.json(result.rows);
-  } catch (e) {
-    console.error('Get users error:', e);
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
 
 // Get admin earnings dashboard
 router.get('/earnings', async (req, res) => {
@@ -54,31 +44,6 @@ router.get('/earnings', async (req, res) => {
   } catch (e) {
     console.error('Get earnings error:', e);
     res.status(500).json({ error: 'Failed to fetch earnings' });
-  }
-});
-
-// Update user chips (admin gives chips)
-router.post('/users/:userId/chips', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { amount, roomId } = req.body;
-
-    // Update room player chips
-    const result = await pool.query(
-      'UPDATE room_players SET chips = chips + $1 WHERE user_id = $2 AND room_id = $3 RETURNING *',
-      [amount, userId, roomId]
-    );
-
-    // Log transaction
-    await pool.query(
-      'INSERT INTO transactions (id, user_id, room_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)',
-      [uuidv4(), userId, roomId, amount, 'admin', `Admin adjusted chips by ${amount}`]
-    );
-
-    res.json(result.rows[0]);
-  } catch (e) {
-    console.error('Update chips error:', e);
-    res.status(500).json({ error: 'Failed to update chips' });
   }
 });
 
@@ -213,6 +178,79 @@ router.post('/rooms/:roomId/give-chips', async (req, res) => {
   } catch (e) {
     console.error('Give chips error:', e);
     res.status(500).json({ error: 'Failed to update chips' });
+  }
+});
+
+// Kick a player from a private table: force-folds them out of any in-progress hand,
+// cashes their table chips back to their account balance, then removes their seat.
+router.post('/rooms/:roomId/kick', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
+    if (room.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+    if (!room.rows[0].is_admin_room || room.rows[0].creator_id !== req.user.id) {
+      return res.status(403).json({ error: 'Only the owner of a private table can kick players there' });
+    }
+
+    const user = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (user.rows.length === 0) return res.status(404).json({ error: 'No user with that username' });
+
+    const seat = await pool.query('SELECT chips FROM room_players WHERE room_id = $1 AND user_id = $2', [roomId, user.rows[0].id]);
+    if (seat.rows.length === 0) return res.status(400).json({ error: 'That player is not seated at this table' });
+
+    await gameEngine.forceFoldFromHand(roomId, user.rows[0].id);
+
+    const cashedOut = seat.rows[0].chips || 0;
+    if (cashedOut > 0) {
+      await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [cashedOut, user.rows[0].id]);
+      await pool.query(
+        'INSERT INTO transactions (id, user_id, room_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)',
+        [uuidv4(), user.rows[0].id, roomId, cashedOut, 'cash_out', `Kicked from ${room.rows[0].name}, cashed out ${cashedOut} chips`]
+      );
+    }
+
+    await pool.query('DELETE FROM room_players WHERE room_id = $1 AND user_id = $2', [roomId, user.rows[0].id]);
+
+    try {
+      const { broadcastToRoom, broadcastPerClient } = require('../server');
+      const state = await gameEngine.getGameState(roomId);
+      broadcastPerClient(roomId, (clientUserId) => ({
+        type: 'game_update',
+        data: gameEngine.maskGameStateForUser(state, clientUserId)
+      }));
+      broadcastToRoom(roomId, { type: 'presence', userId: user.rows[0].id, joined: false, kicked: true });
+    } catch (broadcastErr) {
+      console.error('Kick broadcast error:', broadcastErr);
+    }
+
+    res.json({ username, cashedOut });
+  } catch (e) {
+    console.error('Kick player error:', e);
+    res.status(500).json({ error: 'Failed to kick player' });
+  }
+});
+
+// Rename a private table
+router.patch('/rooms/:roomId/rename', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'A name is required' });
+
+    const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
+    if (room.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+    if (!room.rows[0].is_admin_room || room.rows[0].creator_id !== req.user.id) {
+      return res.status(403).json({ error: 'Only the owner of a private table can rename it' });
+    }
+
+    const result = await pool.query('UPDATE rooms SET name = $1 WHERE id = $2 RETURNING *', [name.trim(), roomId]);
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('Rename room error:', e);
+    res.status(500).json({ error: 'Failed to rename room' });
   }
 });
 

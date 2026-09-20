@@ -151,6 +151,7 @@ async function init() {
       `ALTER TABLE rooms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`,
 
       `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN DEFAULT false`,
+      `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS wants_to_play BOOLEAN DEFAULT true`,
       `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS chips INT DEFAULT 0`,
       `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'waiting'`,
       `ALTER TABLE room_players ADD COLUMN IF NOT EXISTS folded BOOLEAN DEFAULT false`,

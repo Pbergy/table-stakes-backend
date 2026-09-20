@@ -52,26 +52,43 @@ function contestingCount(players) {
 
 // --- Side pot calculation ------------------------------------------------
 
+// Side pots should only fragment around actual ALL-IN thresholds — not around wherever
+// someone happened to fold. Folding just removes a player from contention for everything
+// in the pot; it never creates a legitimate boundary. (A previous version of this used
+// every distinct commitment level as a tier, which orphaned money with zero eligible
+// winners whenever a fold happened after committing more than the remaining player did —
+// a completely normal situation, not just an all-in edge case.)
 function computeSidePots(players) {
-  const remaining = players
-    .filter(p => p.totalCommitted > 0)
-    .map(p => ({ id: p.id, totalCommitted: p.totalCommitted, folded: p.folded }));
+  const contributors = players.filter(p => p.totalCommitted > 0);
+  const allInLevels = [...new Set(contributors.filter(p => p.allIn).map(p => p.totalCommitted))].sort((a, b) => a - b);
 
-  const rawPots = [];
-  while (remaining.length > 0) {
-    const minCommit = Math.min(...remaining.map(p => p.totalCommitted));
-    const amount = minCommit * remaining.length;
-    const eligiblePlayerIds = remaining.filter(p => !p.folded).map(p => p.id);
-    if (amount > 0) rawPots.push({ amount, eligiblePlayerIds });
-    remaining.forEach(p => { p.totalCommitted -= minCommit; });
-    for (let i = remaining.length - 1; i >= 0; i--) {
-      if (remaining[i].totalCommitted <= 0) remaining.splice(i, 1);
-    }
+  if (allInLevels.length === 0) {
+    const amount = contributors.reduce((sum, p) => sum + p.totalCommitted, 0);
+    const eligiblePlayerIds = contributors.filter(p => !p.folded).map(p => p.id);
+    return amount > 0 ? [{ amount, eligiblePlayerIds }] : [];
   }
 
-  // Merge adjacent tiers that share the exact same eligible winners. Tiers only need to stay
-  // separate when an actual all-in changes who can contest the next slice of money — a fold
-  // shouldn't fragment the pot (and its rake) into extra slices with identical eligibility.
+  const remaining = contributors.map(p => ({ id: p.id, totalCommitted: p.totalCommitted, folded: p.folded }));
+  const rawPots = [];
+  let prevLevel = 0;
+  for (const level of [...allInLevels, Infinity]) {
+    const tierSize = level === Infinity ? null : level - prevLevel;
+    let amount = 0;
+    const eligibleSet = new Set();
+    for (const p of remaining) {
+      if (p.totalCommitted <= 0) continue;
+      const take = tierSize === null ? p.totalCommitted : Math.min(p.totalCommitted, tierSize);
+      if (take <= 0) continue;
+      amount += take;
+      p.totalCommitted -= take;
+      if (!p.folded) eligibleSet.add(p.id);
+    }
+    if (amount > 0) rawPots.push({ amount, eligiblePlayerIds: [...eligibleSet] });
+    if (level !== Infinity) prevLevel = level;
+  }
+
+  // Merge adjacent tiers that share the exact same eligible winners — can still happen
+  // when a fold occurs between two all-in levels without changing who's eligible.
   const merged = [];
   for (const pot of rawPots) {
     const last = merged[merged.length - 1];
@@ -98,8 +115,8 @@ async function startHand(roomId) {
       ? await pool.query(
           `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, rp.chips
            FROM room_players rp
-           WHERE rp.room_id = $1 AND rp.chips > 0 AND rp.user_id != $2 ORDER BY rp.seat`,
-          [roomId, room.rows[0].creator_id]
+           WHERE rp.room_id = $1 AND rp.chips > 0 AND rp.wants_to_play = true ORDER BY rp.seat`,
+          [roomId]
         )
       : await pool.query(
           `SELECT rp.id, rp.room_id, rp.user_id, rp.seat, u.balance as chips
@@ -559,6 +576,42 @@ function maskGameStateForUser(gameRow, userId) {
   return masked;
 }
 
+// Force-folds a player out of whatever hand is in progress (used when the admin kicks
+// someone from a private table) without requiring it to be their turn. Safe to call even
+// if they're not currently in a hand.
+async function forceFoldFromHand(roomId, userId) {
+  const game = await pool.query(
+    'SELECT * FROM games WHERE room_id = $1 ORDER BY created_at DESC LIMIT 1',
+    [roomId]
+  );
+  if (game.rows.length === 0) return;
+  const gameRow = game.rows[0];
+  const gameState = gameRow.game_state;
+  if (!gameState || ['complete', 'showdown'].includes(gameState.stage)) return;
+
+  const pos = gameState.players.findIndex(p => p.id === userId);
+  if (pos === -1 || gameState.players[pos].folded) return;
+
+  gameState.players[pos].folded = true;
+  gameState.needsToAct = gameState.needsToAct.filter(p => p !== pos);
+
+  if (activeCount(gameState.players) === 1) {
+    await closeStreetAndAdvance(gameState, gameRow.id, true);
+  } else {
+    if (gameState.currentTurnPos === pos) {
+      gameState.currentTurnPos = nextActivePos(gameState.players, pos);
+    }
+    if (gameState.needsToAct.length === 0) {
+      await closeStreetAndAdvance(gameState, gameRow.id, false);
+    }
+  }
+
+  await pool.query(
+    'UPDATE games SET game_state = $1, stage = $2, updated_at = NOW() WHERE id = $3',
+    [JSON.stringify(gameState), gameState.stage, gameRow.id]
+  );
+}
+
 module.exports = {
   startHand,
   getGameState,
@@ -567,6 +620,7 @@ module.exports = {
   getPendingRakeForAdmin,
   depositPendingRakeToAdmin,
   maskGameStateForUser,
+  forceFoldFromHand,
   makeDeck,
   TURN_TIME_LIMIT_MS
 };
