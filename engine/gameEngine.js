@@ -612,6 +612,28 @@ async function forceFoldFromHand(roomId, userId) {
   );
 }
 
+// If a hand is currently in progress, chip totals live inside that hand's own snapshot
+// (gameState.players[].chips), not room_players.chips — that row only gets overwritten
+// from the snapshot once the hand completes. So an admin chip adjustment made mid-hand
+// needs to patch the live snapshot too, or it would silently vanish the moment the hand ends.
+async function adjustLiveHandChips(roomId, userId, delta) {
+  const game = await pool.query(
+    'SELECT * FROM games WHERE room_id = $1 ORDER BY created_at DESC LIMIT 1',
+    [roomId]
+  );
+  if (game.rows.length === 0) return false;
+  const gameRow = game.rows[0];
+  const gameState = gameRow.game_state;
+  if (!gameState || ['complete', 'showdown'].includes(gameState.stage)) return false;
+
+  const player = gameState.players.find(p => p.id === userId);
+  if (!player) return false;
+
+  player.chips = Math.max(0, player.chips + delta);
+  await pool.query('UPDATE games SET game_state = $1 WHERE id = $2', [JSON.stringify(gameState), gameRow.id]);
+  return true;
+}
+
 module.exports = {
   startHand,
   getGameState,
@@ -621,6 +643,7 @@ module.exports = {
   depositPendingRakeToAdmin,
   maskGameStateForUser,
   forceFoldFromHand,
+  adjustLiveHandChips,
   makeDeck,
   TURN_TIME_LIMIT_MS
 };
