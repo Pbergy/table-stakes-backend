@@ -66,7 +66,32 @@ router.post('/rooms/:roomId/reset', async (req, res) => {
 // Delete room
 router.delete('/rooms/:roomId', async (req, res) => {
   try {
-    await pool.query('DELETE FROM rooms WHERE id = $1', [req.params.roomId]);
+    const { roomId } = req.params;
+    const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [roomId]);
+    if (room.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+
+    // Deleting a private table used to just wipe out everyone's chips there with no
+    // refund — cash them all out to their account balance first, same as kick/leave do.
+    if (room.rows[0].is_admin_room) {
+      const seated = await pool.query('SELECT user_id, chips FROM room_players WHERE room_id = $1 AND chips > 0', [roomId]);
+      for (const p of seated.rows) {
+        await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [p.chips, p.user_id]);
+        await pool.query(
+          'INSERT INTO transactions (id, user_id, room_id, amount, type, description) VALUES ($1, $2, $3, $4, $5, $6)',
+          [uuidv4(), p.user_id, roomId, p.chips, 'cash_out', `Table "${room.rows[0].name}" deleted, cashed out ${p.chips} chips`]
+        );
+      }
+    }
+
+    await pool.query('DELETE FROM rooms WHERE id = $1', [roomId]);
+
+    try {
+      const { broadcastToRoom } = require('../server');
+      broadcastToRoom(roomId, { type: 'room_deleted' });
+    } catch (broadcastErr) {
+      console.error('Room-delete broadcast error:', broadcastErr);
+    }
+
     res.json({ ok: true });
   } catch (e) {
     console.error('Delete room error:', e);
