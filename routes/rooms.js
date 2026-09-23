@@ -124,6 +124,13 @@ router.post('/:roomId/join', async (req, res) => {
       return res.json(already.rows[0]);
     }
 
+    // max_players was set at room creation but never actually enforced anywhere — a
+    // "6-max" table could have unlimited people join it. Enforce it here.
+    const seatedCount = await pool.query('SELECT COUNT(*) as count FROM room_players WHERE room_id = $1', [roomId]);
+    if (Number(seatedCount.rows[0].count) >= room.max_players) {
+      return res.status(400).json({ error: 'This table is full' });
+    }
+
     // The admin joins their own private table as a spectator by default — they opt into
     // a hand explicitly via the "Join Hand" control rather than being dealt in automatically.
     const wantsToPlay = !(room.is_admin_room && room.creator_id === req.user.id);
