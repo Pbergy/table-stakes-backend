@@ -634,6 +634,26 @@ async function adjustLiveHandChips(roomId, userId, delta) {
   return true;
 }
 
+// Same idea as adjustLiveHandChips, but for the account-wide balance endpoint, which
+// doesn't know which room (if any) the user might currently be mid-hand in. Scans active
+// games system-wide — fine at this app's scale (a handful of concurrent tables at most).
+async function adjustLiveHandChipsForUser(userId, delta) {
+  const activeGames = await pool.query(
+    `SELECT DISTINCT ON (room_id) id, room_id, stage, game_state FROM games ORDER BY room_id, created_at DESC`
+  );
+  for (const row of activeGames.rows) {
+    if (['complete', 'showdown'].includes(row.stage)) continue;
+    const gameState = row.game_state;
+    if (!gameState || !gameState.players) continue;
+    const player = gameState.players.find(p => p.id === userId);
+    if (!player) continue;
+    player.chips = Math.max(0, player.chips + delta);
+    await pool.query('UPDATE games SET game_state = $1 WHERE id = $2', [JSON.stringify(gameState), row.id]);
+    return { patched: true, roomId: row.room_id };
+  }
+  return { patched: false };
+}
+
 module.exports = {
   startHand,
   getGameState,
@@ -644,6 +664,7 @@ module.exports = {
   maskGameStateForUser,
   forceFoldFromHand,
   adjustLiveHandChips,
+  adjustLiveHandChipsForUser,
   makeDeck,
   TURN_TIME_LIMIT_MS
 };

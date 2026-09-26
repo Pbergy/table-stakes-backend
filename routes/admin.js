@@ -151,6 +151,22 @@ router.post('/users/:username/give-chips', async (req, res) => {
       [Number(amount), user.rows[0].id]
     );
 
+    // Patch a live hand snapshot too, if this user happens to be mid-hand somewhere right
+    // now — otherwise this adjustment could get silently overwritten once that hand ends.
+    const patchResult = await gameEngine.adjustLiveHandChipsForUser(user.rows[0].id, Number(amount));
+    if (patchResult.patched) {
+      try {
+        const { broadcastPerClient } = require('../server');
+        const state = await gameEngine.getGameState(patchResult.roomId);
+        broadcastPerClient(patchResult.roomId, (clientUserId) => ({
+          type: 'game_update',
+          data: gameEngine.maskGameStateForUser(state, clientUserId)
+        }));
+      } catch (broadcastErr) {
+        console.error('Give-chips live broadcast error:', broadcastErr);
+      }
+    }
+
     await pool.query(
       'INSERT INTO transactions (id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)',
       [uuidv4(), user.rows[0].id, Number(amount), Number(amount) > 0 ? 'admin_grant' : 'admin_deduction',

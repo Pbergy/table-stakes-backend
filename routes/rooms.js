@@ -5,6 +5,10 @@ const gameEngine = require('../engine/gameEngine');
 
 const router = express.Router();
 
+// Guards against two simultaneous ready-check requests both dealing a hand into the
+// same room at once (see the /ready route below).
+const dealingLocks = new Set();
+
 function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
@@ -227,10 +231,18 @@ router.post('/:roomId/ready', async (req, res) => {
     const allReady = seated.rows.length >= 2 && seated.rows.every(p => p.is_ready);
 
     let dealt = false;
-    if (allReady && !handInProgress) {
-      await gameEngine.startHand(roomId);
-      await pool.query('UPDATE room_players SET is_ready = false WHERE room_id = $1', [roomId]);
-      dealt = true;
+    // In-memory lock (this app runs as a single Node process, so this is sufficient):
+    // two people readying up at the exact same instant could otherwise both pass the
+    // allReady check and both call startHand, dealing two hands into the same room.
+    if (allReady && !handInProgress && !dealingLocks.has(roomId)) {
+      dealingLocks.add(roomId);
+      try {
+        await gameEngine.startHand(roomId);
+        await pool.query('UPDATE room_players SET is_ready = false WHERE room_id = $1', [roomId]);
+        dealt = true;
+      } finally {
+        dealingLocks.delete(roomId);
+      }
     }
 
     // Let everyone at the table see live ready-checkmarks and, if it happened, the new hand.
