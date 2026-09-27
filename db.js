@@ -112,7 +112,7 @@ async function init() {
       CREATE TABLE IF NOT EXISTS transactions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID NOT NULL REFERENCES users(id),
-        room_id UUID REFERENCES rooms(id),
+        room_id UUID REFERENCES rooms(id) ON DELETE SET NULL,
         amount INT NOT NULL,
         type VARCHAR(20),
         description TEXT,
@@ -170,6 +170,13 @@ async function init() {
     for (const sql of migrations) {
       await client.query(sql);
     }
+
+    // This database's transactions.room_id FK had no ON DELETE behavior at all, which
+    // silently blocked deleting any room that ever had a hand played in it (or that a
+    // cash-out transaction was just written for). Preserve the transaction history —
+    // just detach it from the room instead of either blocking or cascading it away.
+    await client.query(`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_room_id_fkey`);
+    await client.query(`ALTER TABLE transactions ADD CONSTRAINT transactions_room_id_fkey FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL`);
 
     console.log('✅ Tables initialized');
     client.release();
