@@ -120,6 +120,23 @@ router.post('/users/:username/ban', async (req, res) => {
 });
 
 // List all users so the admin can manage account-wide chip balances directly
+// Full transaction history for one user — lets the admin see exactly why any balance
+// changed (a win, a loss, an admin grant/deduction, a cash-out), instead of guessing.
+router.get('/users/:username/transactions', async (req, res) => {
+  try {
+    const user = await pool.query('SELECT id FROM users WHERE username = $1', [req.params.username]);
+    if (user.rows.length === 0) return res.status(404).json({ error: 'No user with that username' });
+    const result = await pool.query(
+      'SELECT * FROM transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100',
+      [user.rows[0].id]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('Get user transactions error:', e);
+    res.status(500).json({ error: 'Failed to fetch transactions' });
+  }
+});
+
 router.get('/users', async (req, res) => {
   try {
     const result = await pool.query(
@@ -291,6 +308,28 @@ router.post('/rooms/:roomId/kick', async (req, res) => {
 });
 
 // Rename a private table
+// Change the blinds for a table. Only takes effect on the next hand dealt — an in-progress
+// hand keeps whatever blinds it started with.
+router.patch('/rooms/:roomId/blinds', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { smallBlind, bigBlind } = req.body;
+    if (!Number.isFinite(Number(smallBlind)) || !Number.isFinite(Number(bigBlind)) || smallBlind <= 0 || bigBlind <= smallBlind) {
+      return res.status(400).json({ error: 'Big blind must be greater than a positive small blind' });
+    }
+
+    const room = await pool.query('SELECT settings FROM rooms WHERE id = $1', [roomId]);
+    if (room.rows.length === 0) return res.status(404).json({ error: 'Room not found' });
+
+    const settings = { ...(room.rows[0].settings || {}), smallBlind: Number(smallBlind), bigBlind: Number(bigBlind) };
+    const result = await pool.query('UPDATE rooms SET settings = $1 WHERE id = $2 RETURNING *', [JSON.stringify(settings), roomId]);
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('Update blinds error:', e);
+    res.status(500).json({ error: 'Failed to update blinds' });
+  }
+});
+
 router.patch('/rooms/:roomId/rename', async (req, res) => {
   try {
     const { roomId } = req.params;

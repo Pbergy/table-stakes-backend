@@ -126,6 +126,7 @@ function broadcastPerClient(roomId, buildMessageForUser) {
 
 // Turn clock: any player who sits on their turn past the time limit gets auto-folded (or
 // auto-checked if there's nothing to call) so one slow/AFK player can't stall the table.
+const autoDealLocks = new Set();
 setInterval(async () => {
   try {
     const active = await pool.query(
@@ -155,6 +156,44 @@ setInterval(async () => {
         }
       } catch (actionErr) {
         console.error('Auto-fold error for room', row.room_id, actionErr.message);
+      }
+    }
+
+    // Auto-continue: once a hand finishes, the table just keeps dealing — no need to
+    // re-click "Ready" before every single hand, only before the very first one.
+    const finished = await pool.query(
+      `SELECT DISTINCT ON (room_id) room_id, stage, updated_at
+       FROM games ORDER BY room_id, created_at DESC`
+    );
+    for (const row of finished.rows) {
+      if (row.stage !== 'complete') continue;
+      if (Date.now() - new Date(row.updated_at).getTime() < 4000) continue; // let the result display briefly first
+      if (autoDealLocks.has(row.room_id)) continue;
+
+      const room = await pool.query('SELECT * FROM rooms WHERE id = $1', [row.room_id]);
+      if (room.rows.length === 0) continue;
+
+      const eligible = room.rows[0].is_admin_room
+        ? await pool.query('SELECT COUNT(*) as count FROM room_players WHERE room_id = $1 AND chips > 0 AND wants_to_play = true', [row.room_id])
+        : await pool.query(
+            `SELECT COUNT(*) as count FROM room_players rp JOIN users u ON u.id = rp.user_id
+             WHERE rp.room_id = $1 AND u.balance > 0`,
+            [row.room_id]
+          );
+      if (Number(eligible.rows[0].count) < 2) continue;
+
+      autoDealLocks.add(row.room_id);
+      try {
+        await gameEngine.startHand(row.room_id);
+        const state = await gameEngine.getGameState(row.room_id);
+        broadcastPerClient(row.room_id, (clientUserId) => ({
+          type: 'game_update',
+          data: gameEngine.maskGameStateForUser(state, clientUserId)
+        }));
+      } catch (dealErr) {
+        console.error('Auto-deal error for room', row.room_id, dealErr.message);
+      } finally {
+        autoDealLocks.delete(row.room_id);
       }
     }
   } catch (e) {
