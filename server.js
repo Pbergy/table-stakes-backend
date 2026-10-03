@@ -124,6 +124,17 @@ function broadcastPerClient(roomId, buildMessageForUser) {
   });
 }
 
+// Sends to every connection authenticated as this user, regardless of which room (if any)
+// they currently have joined — used for things like "you were just invited to a table",
+// which need to reach someone sitting in the lobby, not inside any specific room.
+function broadcastToUser(userId, message) {
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN && client.userId === userId) {
+      client.send(JSON.stringify(message));
+    }
+  });
+}
+
 // Turn clock: any player who sits on their turn past the time limit gets auto-folded (or
 // auto-checked if there's nothing to call) so one slow/AFK player can't stall the table.
 const autoDealLocks = new Set();
@@ -209,4 +220,4 @@ server.listen(process.env.PORT || 3000, async () => {
   console.log('✅ Database initialized');
 });
 
-module.exports = { app, wss, broadcastToRoom, broadcastPerClient };
+module.exports = { app, wss, broadcastToRoom, broadcastPerClient, broadcastToUser };

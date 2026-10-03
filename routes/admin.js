@@ -393,6 +393,14 @@ router.post('/rooms/:roomId/invite', async (req, res) => {
       [uuidv4(), roomId, username, req.user.id]
     );
 
+    const room = await pool.query('SELECT name FROM rooms WHERE id = $1', [roomId]);
+    try {
+      const { broadcastToUser } = require('../server');
+      broadcastToUser(userExists.rows[0].id, { type: 'new_invite', roomName: room.rows[0]?.name });
+    } catch (broadcastErr) {
+      console.error('Invite broadcast error:', broadcastErr);
+    }
+
     res.json(result.rows[0]);
   } catch (e) {
     console.error('Invite user error:', e);
