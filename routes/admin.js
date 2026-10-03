@@ -99,6 +99,26 @@ router.delete('/rooms/:roomId', async (req, res) => {
   }
 });
 
+// Permanently delete a user account. Their historical hands/transactions/chat stay intact
+// for everyone else (detached from the deleted account, not destroyed), but any seat they
+// currently hold at a table is removed along with them.
+router.delete('/users/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const user = await pool.query('SELECT id, is_admin FROM users WHERE username = $1', [username]);
+    if (user.rows.length === 0) return res.status(404).json({ error: 'No user with that username' });
+    if (user.rows[0].is_admin) return res.status(400).json({ error: "Can't delete an admin account" });
+
+    await pool.query('DELETE FROM room_invites WHERE username = $1', [username]);
+    await pool.query('DELETE FROM users WHERE id = $1', [user.rows[0].id]);
+
+    res.json({ ok: true, username });
+  } catch (e) {
+    console.error('Delete user error:', e);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
 // Ban or unban a user. This is deliberately a ban rather than a hard delete — the user
 // may be referenced by historical hands, transactions, and rooms they created, and
 // removing those rows would corrupt everyone else's game history.

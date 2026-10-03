@@ -178,6 +178,32 @@ async function init() {
     await client.query(`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_room_id_fkey`);
     await client.query(`ALTER TABLE transactions ADD CONSTRAINT transactions_room_id_fkey FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL`);
 
+    // Same class of bug, but for users: every one of these FKs had no ON DELETE behavior,
+    // which would have blocked deleting any account that ever played a hand, chatted, or
+    // created a room. Fix them so deletion works without destroying everyone else's history.
+    await client.query(`ALTER TABLE transactions ALTER COLUMN user_id DROP NOT NULL`);
+    await client.query(`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_user_id_fkey`);
+    await client.query(`ALTER TABLE transactions ADD CONSTRAINT transactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL`);
+
+    await client.query(`ALTER TABLE rooms ALTER COLUMN creator_id DROP NOT NULL`);
+    await client.query(`ALTER TABLE rooms DROP CONSTRAINT IF EXISTS rooms_creator_id_fkey`);
+    await client.query(`ALTER TABLE rooms ADD CONSTRAINT rooms_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE SET NULL`);
+
+    await client.query(`ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS chat_messages_user_id_fkey`);
+    await client.query(`ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL`);
+
+    await client.query(`ALTER TABLE game_log DROP CONSTRAINT IF EXISTS game_log_user_id_fkey`);
+    await client.query(`ALTER TABLE game_log ADD CONSTRAINT game_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL`);
+
+    await client.query(`ALTER TABLE games DROP CONSTRAINT IF EXISTS games_winner_id_fkey`);
+    await client.query(`ALTER TABLE games ADD CONSTRAINT games_winner_id_fkey FOREIGN KEY (winner_id) REFERENCES users(id) ON DELETE SET NULL`);
+
+    await client.query(`ALTER TABLE room_players DROP CONSTRAINT IF EXISTS room_players_user_id_fkey`);
+    await client.query(`ALTER TABLE room_players ADD CONSTRAINT room_players_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`);
+
+    await client.query(`ALTER TABLE admin_deposits DROP CONSTRAINT IF EXISTS admin_deposits_admin_id_fkey`);
+    await client.query(`ALTER TABLE admin_deposits ADD CONSTRAINT admin_deposits_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE`);
+
     console.log('✅ Tables initialized');
     client.release();
 
