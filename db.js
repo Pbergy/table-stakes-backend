@@ -213,15 +213,25 @@ async function init() {
   }
 }
 
-// Create (or promote) the admin account from ADMIN_USERNAME/ADMIN_PASSWORD env vars.
-// Without this, is_admin is never true for anyone and rake has nowhere to go.
+// Create (or promote) the one and only admin account. The username is hardcoded on
+// purpose — admin must always be "pberg", regardless of what ADMIN_USERNAME happens to
+// be set to in the environment, so a mistyped env var can never promote the wrong account.
+const SOLE_ADMIN_USERNAME = 'pberg';
+
 async function ensureAdminAccount() {
-  const username = process.env.ADMIN_USERNAME;
+  const username = SOLE_ADMIN_USERNAME;
   const password = process.env.ADMIN_PASSWORD;
-  if (!username || !password) {
-    console.log('ℹ️  ADMIN_USERNAME/ADMIN_PASSWORD not set — skipping admin bootstrap');
+  if (!password) {
+    console.log('ℹ️  ADMIN_PASSWORD not set — skipping admin bootstrap');
     return;
   }
+  if (process.env.ADMIN_USERNAME && process.env.ADMIN_USERNAME !== SOLE_ADMIN_USERNAME) {
+    console.log(`⚠️  ADMIN_USERNAME is set to "${process.env.ADMIN_USERNAME}" but admin is locked to "${SOLE_ADMIN_USERNAME}" — ignoring it`);
+  }
+
+  // Belt-and-suspenders: strip admin from anyone else who might somehow have it, so
+  // "pberg" is provably the only admin account no matter how that happened.
+  await pool.query('UPDATE users SET is_admin = false WHERE username != $1 AND is_admin = true', [SOLE_ADMIN_USERNAME]);
 
   const bcrypt = require('bcryptjs');
   const { v4: uuidv4 } = require('uuid');
