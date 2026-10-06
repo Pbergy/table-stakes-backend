@@ -1,7 +1,39 @@
 const express = require('express');
 const { pool } = require('../db');
+const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
+
+// Ask the admin for more chips — doesn't grant anything itself, just creates a pending
+// request the admin can approve or deny. Chips only ever come from that decision.
+router.post('/chip-requests', async (req, res) => {
+  try {
+    const { amount } = req.body;
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return res.status(400).json({ error: 'A positive amount is required' });
+    }
+
+    const result = await pool.query(
+      'INSERT INTO chip_requests (id, user_id, amount) VALUES ($1, $2, $3) RETURNING *',
+      [uuidv4(), req.user.id, Number(amount)]
+    );
+
+    try {
+      const { broadcastToUser } = require('../server');
+      const admin = await pool.query('SELECT id FROM users WHERE is_admin = true LIMIT 1');
+      if (admin.rows.length > 0) {
+        broadcastToUser(admin.rows[0].id, { type: 'new_chip_request', username: req.user.username, amount: Number(amount) });
+      }
+    } catch (broadcastErr) {
+      console.error('Chip request broadcast error:', broadcastErr);
+    }
+
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('Create chip request error:', e);
+    res.status(500).json({ error: 'Failed to send request' });
+  }
+});
 
 // Get room players
 router.get('/room/:roomId', async (req, res) => {

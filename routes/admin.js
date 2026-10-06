@@ -99,6 +99,79 @@ router.delete('/rooms/:roomId', async (req, res) => {
   }
 });
 
+// List pending chip requests from players
+router.get('/chip-requests', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT cr.*, u.username FROM chip_requests cr JOIN users u ON u.id = cr.user_id
+       WHERE cr.status = 'pending' ORDER BY cr.created_at ASC`
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('List chip requests error:', e);
+    res.status(500).json({ error: 'Failed to fetch requests' });
+  }
+});
+
+// Approve a chip request — grants the requested amount to the player's account balance,
+// patching a live hand snapshot too if they're mid-hand, same as any other chip grant.
+router.post('/chip-requests/:id/approve', async (req, res) => {
+  try {
+    const request = await pool.query('SELECT * FROM chip_requests WHERE id = $1 AND status = $2', [req.params.id, 'pending']);
+    if (request.rows.length === 0) return res.status(404).json({ error: 'Request not found or already resolved' });
+    const { user_id: userId, amount } = request.rows[0];
+
+    await pool.query('UPDATE users SET balance = balance + $1 WHERE id = $2', [amount, userId]);
+    await pool.query('UPDATE chip_requests SET status = $1, resolved_at = NOW() WHERE id = $2', ['approved', req.params.id]);
+    await pool.query(
+      'INSERT INTO transactions (id, user_id, amount, type, description) VALUES ($1, $2, $3, $4, $5)',
+      [uuidv4(), userId, amount, 'admin_grant', `Chip request approved: +${amount} chips`]
+    );
+
+    const patchResult = await gameEngine.adjustLiveHandChipsForUser(userId, amount);
+    try {
+      const { broadcastToUser, broadcastPerClient } = require('../server');
+      broadcastToUser(userId, { type: 'chip_request_resolved', status: 'approved', amount });
+      if (patchResult.patched) {
+        const state = await gameEngine.getGameState(patchResult.roomId);
+        broadcastPerClient(patchResult.roomId, (clientUserId) => ({
+          type: 'game_update',
+          data: gameEngine.maskGameStateForUser(state, clientUserId)
+        }));
+      }
+    } catch (broadcastErr) {
+      console.error('Chip request approve broadcast error:', broadcastErr);
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Approve chip request error:', e);
+    res.status(500).json({ error: 'Failed to approve request' });
+  }
+});
+
+// Deny a chip request
+router.post('/chip-requests/:id/deny', async (req, res) => {
+  try {
+    const request = await pool.query('SELECT * FROM chip_requests WHERE id = $1 AND status = $2', [req.params.id, 'pending']);
+    if (request.rows.length === 0) return res.status(404).json({ error: 'Request not found or already resolved' });
+
+    await pool.query('UPDATE chip_requests SET status = $1, resolved_at = NOW() WHERE id = $2', ['denied', req.params.id]);
+
+    try {
+      const { broadcastToUser } = require('../server');
+      broadcastToUser(request.rows[0].user_id, { type: 'chip_request_resolved', status: 'denied', amount: request.rows[0].amount });
+    } catch (broadcastErr) {
+      console.error('Chip request deny broadcast error:', broadcastErr);
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Deny chip request error:', e);
+    res.status(500).json({ error: 'Failed to deny request' });
+  }
+});
+
 // Permanently delete a user account. Their historical hands/transactions/chat stay intact
 // for everyone else (detached from the deleted account, not destroyed), but any seat they
 // currently hold at a table is removed along with them.

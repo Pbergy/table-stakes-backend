@@ -119,6 +119,15 @@ async function init() {
         created_at TIMESTAMP DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS chip_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        amount INT NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT NOW(),
+        resolved_at TIMESTAMP
+      );
+
       CREATE TABLE IF NOT EXISTS admin_deposits (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         admin_id UUID NOT NULL REFERENCES users(id),
